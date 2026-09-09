@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
+    "icon": "node scripts/generate-icon.mjs && tauri icon assets/logo.png && rm -rf src-tauri/icons/android src-tauri/icons/ios",
     "release": "pnpm version",
     "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock Casks/lookout.rb",
     "postversion": "git push --follow-tags"
@@ -41,10 +42,12 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "opentype.js": "^2.0.0",
     "tailwindcss": "^4.3.2",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wawoff2": "^2.0.1"
   },
   "packageManager": "pnpm@10.25.0+sha512.5e82639027af37cf832061bcc6d639c219634488e0f2baebe785028a793de7b525ffcd3f7ff574f5e9860654e098fe852ba8ac5dd5cefe1767d23a020a92f501"
 }
