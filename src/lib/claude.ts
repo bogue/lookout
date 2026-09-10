@@ -10,7 +10,11 @@ export type StreamEvent =
 
 // Tool allowlist for every configurable action button. A superset of what the fixed actions used
 // (gh + git + read/edit/write + Task): read-only prompts simply never reach for the edit tools.
-export const ACTION_TOOLS = 'Bash(gh:*),Bash(git:*),Read,Edit,Write,Glob,Grep,Task,TodoWrite'
+// pnpm/npx: a command that fixes failing tests has to run them. command/lookout: /do-review reports
+// back with `command -v lookout && lookout card comments-pushed`, and a compound command needs
+// every part allowed or the whole call is denied.
+export const ACTION_TOOLS =
+  'Bash(gh:*),Bash(git:*),Bash(pnpm:*),Bash(npx:*),Bash(command:*),Bash(lookout:*),Read,Edit,Write,Glob,Grep,Task,TodoWrite'
 // default used by runs.ts when no allowlist is passed (kept in sync with ACTION_TOOLS)
 export const REVIEW_TOOLS = ACTION_TOOLS
 
