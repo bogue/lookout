@@ -2,8 +2,7 @@ cask "lookout" do
   version "0.2.1"
   sha256 "d89d16034b0c5d02cabf47e9f6141c541657db6af6d5e370a664182a4a97b294"
 
-  url "https://github.com/chartrandf/lookout/releases/download/v#{version}/Lookout_#{version}_universal.dmg",
-      verified: "github.com/chartrandf/lookout/"
+  url "https://github.com/chartrandf/lookout/releases/download/v#{version}/Lookout_#{version}_universal.dmg"
   name "Lookout"
   desc "Desktop overview of your Claude Code review sessions"
   homepage "https://github.com/chartrandf/lookout"
@@ -13,7 +12,7 @@ cask "lookout" do
     strategy :github_latest
   end
 
-  depends_on macos: :catalina
+  depends_on macos: :big_sur
 
   app "Lookout.app"
   # The `lookout` CLI ships inside the bundle: it moves review cards from a terminal, which is how
@@ -24,9 +23,8 @@ cask "lookout" do
   # flag propagates to everything copied out of the mounted image), so Gatekeeper would block the
   # first launch. Clear it here — a third-party tap has to be `brew trust`ed to run this, which is
   # the consent that makes it acceptable.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Lookout.app"]
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Lookout.app"]
   end
 
   zap trash: [
