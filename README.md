@@ -20,7 +20,7 @@ brew trust --cask chartrandf/lookout/lookout   # Homebrew 6+ gates third-party c
 brew install --cask lookout                    # --force to replace a hand-installed copy
 ```
 
-No Gatekeeper prompt: the cask's `postflight` clears `com.apple.quarantine` from the installed app.
+No Gatekeeper prompt: the cask's `postflight_steps` clears `com.apple.quarantine` from the installed app.
 The flag rides along on the downloaded `.dmg` and propagates to everything copied out of it, so
 without that step the first launch is blocked. Trusting the cask is what authorises it to run —
 `brew trust` exists for exactly this, so read the cask before trusting it (it's 30 lines).
