@@ -56,7 +56,15 @@ export const getConfig = async (): Promise<Config> => {
     reviewButtons: migrateButtons((await s.get<ActionButton[]>('reviewButtons')) ?? DEFAULT_REVIEW_BUTTONS),
     prButtons: migrateButtons((await s.get<ActionButton[]>('prButtons')) ?? DEFAULT_PR_BUTTONS),
     animations: (await s.get<boolean>('animations')) ?? true,
+    // on by default: the failures worth catching (a gh call, a claude spawn) are intermittent, so a
+    // switch you have to flip first would never be on when one happens. Rotated at 2 MB.
+    logging: (await s.get<boolean>('logging')) ?? true,
   }
+}
+
+export const setLogging = async (logging: boolean) => {
+  const s = await getStore()
+  await s.set('logging', logging)
 }
 
 export const setAnimations = async (animations: boolean) => {

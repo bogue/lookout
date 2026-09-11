@@ -3,7 +3,7 @@ import { homeDir } from '@tauri-apps/api/path'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { open } from '@tauri-apps/plugin-dialog'
 import { exists } from '@tauri-apps/plugin-fs'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEffect, useState } from 'react'
 import { ACTION_ICON_NAMES, ActionIcon } from '../components/ActionIcon'
 import { CommandTextarea } from '../components/CommandTextarea'
@@ -13,6 +13,7 @@ import { CONDITION_FIELDS } from '../lib/buttons'
 import { listSlashCommands } from '../lib/commands'
 import { DEFAULT_PR_BUTTONS, DEFAULT_REVIEW_BUTTONS } from '../lib/config'
 import { repoFromPath } from '../lib/gh'
+import { clearLog, logPath } from '../lib/log'
 import { notify } from '../lib/notify'
 import { STAGES } from '../lib/stages'
 import type { ActionButton, ButtonBoard, Config, ReviewTask, Stage, WatchedRepo } from '../types'
@@ -25,6 +26,7 @@ type Props = {
   onSaveReviewButtons: (buttons: ActionButton[]) => void
   onSavePrButtons: (buttons: ActionButton[]) => void
   onSaveAnimations: (on: boolean) => void
+  onSaveLogging: (on: boolean) => void
 }
 
 // one settings row: label, hint, and the pill switch on the right
@@ -33,29 +35,34 @@ const ToggleRow = ({
   hint,
   on,
   onToggle,
+  children,
 }: {
   label: string
   hint: string
   on: boolean
   onToggle: () => void
+  children?: React.ReactNode // extra controls, shown under the row (e.g. the log file actions)
 }) => (
-  <div className="flex items-center justify-between rounded-lg border border-deck-700 p-3">
-    <div>
-      <p className="text-sm font-medium text-deck-200">{label}</p>
-      <p className="text-xs text-deck-500">{hint}</p>
+  <div className="flex flex-col gap-2 rounded-lg border border-deck-700 p-3">
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium text-deck-200">{label}</p>
+        <p className="text-xs text-deck-500">{hint}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        onClick={onToggle}
+        className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${on ? 'bg-grass-500' : 'bg-deck-600'}`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ${on ? 'translate-x-5' : ''}`}
+        />
+      </button>
     </div>
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={onToggle}
-      className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${on ? 'bg-grass-500' : 'bg-deck-600'}`}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ${on ? 'translate-x-5' : ''}`}
-      />
-    </button>
+    {children}
   </div>
 )
 
@@ -348,7 +355,15 @@ const ActionsPreview = ({
   </div>
 )
 
-export const Settings = ({ config, tasks, onSave, onSaveReviewButtons, onSavePrButtons, onSaveAnimations }: Props) => {
+export const Settings = ({
+  config,
+  tasks,
+  onSave,
+  onSaveReviewButtons,
+  onSavePrButtons,
+  onSaveAnimations,
+  onSaveLogging,
+}: Props) => {
   const [path, setPath] = useState('')
   const [editing, setEditing] = useState<ButtonBoard | null>(null) // which board's actions are open in the side panel
   const [reviewBtns, setReviewBtns] = useState<ActionButton[]>(config.reviewButtons)
@@ -372,6 +387,7 @@ export const Settings = ({ config, tasks, onSave, onSaveReviewButtons, onSavePrB
   const [addError, setAddError] = useState<string | null>(null)
   const [autostart, setAutostart] = useState(false)
   const [version, setVersion] = useState('')
+  const [logFile, setLogFile] = useState('')
 
   useEffect(() => {
     isEnabled()
@@ -380,6 +396,9 @@ export const Settings = ({ config, tasks, onSave, onSaveReviewButtons, onSavePrB
     getVersion()
       .then(setVersion)
       .catch(() => {}) // browser preview (no tauri): just leave it out
+    logPath()
+      .then(setLogFile)
+      .catch(() => {})
   }, [])
 
   const toggleAutostart = async () => {
@@ -547,6 +566,36 @@ export const Settings = ({ config, tasks, onSave, onSaveReviewButtons, onSavePrB
         on={config.animations}
         onToggle={() => onSaveAnimations(!config.animations)}
       />
+
+      <ToggleRow
+        label="Debug log"
+        hint="Record gh calls, claude runs, sync and database errors to a file — what to read when something silently does nothing."
+        on={config.logging}
+        onToggle={() => onSaveLogging(!config.logging)}
+      >
+        {logFile && (
+          <div className="flex items-center gap-2 border-t border-deck-800 pt-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-deck-500" title={logFile}>
+              {logFile}
+            </span>
+            {/* both tolerate a log file that doesn't exist yet (nothing has been written) */}
+            <button
+              type="button"
+              onClick={() => revealItemInDir(logFile).catch(() => {})}
+              className="cursor-pointer rounded-md border border-deck-600 px-2 py-1 text-xs text-deck-300 hover:bg-deck-700"
+            >
+              Reveal
+            </button>
+            <button
+              type="button"
+              onClick={() => clearLog().catch(() => {})}
+              className="cursor-pointer rounded-md border border-deck-600 px-2 py-1 text-xs text-deck-300 hover:bg-deck-700"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+      </ToggleRow>
 
       {import.meta.env.DEV && (
         <div className="flex items-center justify-between rounded-lg border border-deck-700 p-3">

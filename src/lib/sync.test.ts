@@ -76,6 +76,7 @@ describe('syncAll — PR state reconciliation', () => {
       reviewButtons: [],
       prButtons: [],
       animations: true,
+      logging: false,
     })
     // PR is no longer in the open list (it merged/closed on GitHub)
     vi.mocked(listOpenPrs).mockResolvedValue([])

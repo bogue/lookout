@@ -1,10 +1,23 @@
 import { Command } from '@tauri-apps/plugin-shell'
 import type { CiState } from '../types'
+import { errText, logError } from './log'
 import { rollupToCiState } from './prboard'
 
+// Every gh failure is logged here rather than at the call sites: most of them swallow the rejection
+// to keep one bad repo (or one unreachable PR) from emptying a board, which used to mean a broken
+// `gh` looked exactly like a PR with no activity.
+const fail = (message: string): never => {
+  logError('gh', message)
+  throw new Error(message)
+}
+
 const gh = async (args: string[], cwd?: string): Promise<string> => {
-  const out = await Command.create('gh', args, cwd ? { cwd } : undefined).execute()
-  if (out.code !== 0) throw new Error(`gh ${args.join(' ')} failed: ${out.stderr}`)
+  const label = `gh ${args.join(' ')}`
+  const out = await Command.create('gh', args, cwd ? { cwd } : undefined)
+    .execute()
+    // gh missing from PATH (a packaged build starts from launchd's bare PATH) or denied by the shell scope
+    .catch((e) => fail(`${label} could not start: ${errText(e)}`))
+  if (out.code !== 0) fail(`${label} failed: ${out.stderr.trim()}`)
   return out.stdout
 }
 

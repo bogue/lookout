@@ -1,3 +1,4 @@
+mod applog;
 mod cli_bridge;
 
 use tauri::Manager;
@@ -134,7 +135,12 @@ pub fn run() {
                 )
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![open_pr_window])
+        .invoke_handler(tauri::generate_handler![
+            open_pr_window,
+            applog::log_append,
+            applog::log_path,
+            applog::log_clear
+        ])
         // the socket the `lookout` CLI pings after a write, so the board repaints immediately
         .setup(|app| {
             cli_bridge::start(app.handle());

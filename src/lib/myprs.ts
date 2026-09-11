@@ -3,6 +3,7 @@ import { MY_PR_ALERT_KINDS, myPrAlerts } from './alerts'
 import { getConfig, setGithubUser } from './config'
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, pruneMyPrRepos, syncAlerts, upsertMyPr } from './db'
 import { fetchLogin, fetchPrExchange, listMyPrs } from './gh'
+import { logError } from './log'
 import { notify } from './notify'
 import { isBoardable, toMyPr } from './prboard'
 import { resolveColumn } from './prcolumns'
@@ -37,6 +38,7 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
       raw = await listMyPrs(repo, me)
     } catch (e) {
       console.error(`my-PR sync failed for ${repo}:`, e) // one bad repo shouldn't drop its cards
+      logError('myprs', e, `list ${repo}`)
       continue
     }
     listed.push(repo)
@@ -74,6 +76,7 @@ const refreshMyPrAlerts = async (prs: MyPr[], repos: string[], me: string) => {
   for (const pr of prs.filter((p) => p.state === 'open' && p.humanReview !== null)) {
     const x = await fetchPrExchange(pr.repo, pr.number, me).catch((e) => {
       console.error(`my-PR alert check failed for ${pr.id}:`, e)
+      logError('myprs', e, `alert check ${pr.id}`)
       return null
     })
     if (x) derived.push(...myPrAlerts(pr, x, me))

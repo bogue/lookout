@@ -13,6 +13,7 @@ import {
   upsertPr,
 } from './db'
 import { fetchLogin, fetchName, fetchPrExchange, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
+import { logError } from './log'
 import { notify } from './notify'
 import { scanReviewFiles } from './reviews'
 import { approvedByMe, deriveStage } from './reviewstage'
@@ -56,6 +57,7 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
       ])
     } catch (e) {
       console.error(`sync failed for ${repo}:`, e)
+      logError('sync', e, `repo ${repo}`)
       continue // don't let one repo break the pass (or falsely auto-clear its tasks)
     }
     polledRepos.add(repo)
@@ -126,6 +128,7 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
         derived.push(...taskAlerts({ ...t, stage }, x, me)) // alerts read the column we just derived
       } catch (e) {
         console.error(`activity poll failed for ${t.id}:`, e)
+        logError('sync', e, `activity poll ${t.id}`)
       }
     }
   }

@@ -34,6 +34,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   reviewButtons: [],
   prButtons: [],
   animations: true,
+  logging: false,
 })
 
 const ghPr = (o: Partial<GhMyPr> = {}): GhMyPr => ({

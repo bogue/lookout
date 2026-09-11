@@ -1,6 +1,7 @@
 import type { Child } from '@tauri-apps/plugin-shell'
 import type { ButtonBoard } from '../types'
 import { REVIEW_TOOLS, spawnClaude } from './claude'
+import { errText, logError, logInfo, logWarn } from './log'
 
 export type RunLine = { kind: 'text' | 'tool' | 'user' | 'error'; text: string }
 
@@ -43,30 +44,42 @@ type Callbacks = {
 const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSessionId?: string) => {
   run.status = 'running'
   notify()
-  run.child = await spawnClaude(
-    prompt,
-    run.repoPath,
-    (e) => {
-      if (e.type === 'init') {
-        run.sessionId = e.sessionId
-        callbacks.onSession?.(run.taskId, e.sessionId)
-      } else if (e.type === 'text') run.lines.push({ kind: 'text', text: e.text })
-      else if (e.type === 'tool') run.lines.push({ kind: 'tool', text: `${e.name} ${e.detail}`.trim() })
-      else if (e.type === 'stderr') run.lines.push({ kind: 'error', text: e.text })
-      else if (e.type === 'result') {
-        run.status = 'awaiting-input'
-        // the final summary usually duplicates the last text block — only push when it doesn't
-        if (e.text && run.lines.at(-1)?.text !== e.text) run.lines.push({ kind: 'text', text: e.text })
-        callbacks.onResult?.(run.taskId, e.text)
-      } else if (e.type === 'exit') {
-        run.child = null
-        if (run.status === 'running') run.status = e.code === 0 ? 'closed' : 'error'
-      }
-      notify()
-    },
-    resumeSessionId,
-    run.allowedTools,
-  )
+  logInfo('run', `${run.taskId}: ${run.command} in ${run.repoPath}${resumeSessionId ? ' (resume)' : ''}`)
+  try {
+    run.child = await spawnClaude(
+      prompt,
+      run.repoPath,
+      (e) => {
+        if (e.type === 'init') {
+          run.sessionId = e.sessionId
+          callbacks.onSession?.(run.taskId, e.sessionId)
+        } else if (e.type === 'text') run.lines.push({ kind: 'text', text: e.text })
+        else if (e.type === 'tool') run.lines.push({ kind: 'tool', text: `${e.name} ${e.detail}`.trim() })
+        else if (e.type === 'stderr') {
+          run.lines.push({ kind: 'error', text: e.text })
+          logWarn('run', `${run.taskId}: ${e.text}`)
+        } else if (e.type === 'result') {
+          run.status = 'awaiting-input'
+          // the final summary usually duplicates the last text block — only push when it doesn't
+          if (e.text && run.lines.at(-1)?.text !== e.text) run.lines.push({ kind: 'text', text: e.text })
+          callbacks.onResult?.(run.taskId, e.text)
+        } else if (e.type === 'exit') {
+          run.child = null
+          if (run.status === 'running') run.status = e.code === 0 ? 'closed' : 'error'
+          if (e.code !== 0) logWarn('run', `${run.taskId}: claude exited with code ${e.code}`)
+        }
+        notify()
+      },
+      resumeSessionId,
+      run.allowedTools,
+    )
+  } catch (e) {
+    // claude never started (missing from PATH, cwd gone, denied by the shell scope). Without this the
+    // promise rejected into nothing and the card sat on "running" forever with an empty transcript.
+    run.status = 'error'
+    run.lines.push({ kind: 'error', text: `could not start claude: ${errText(e)}` })
+    logError('run', e, `${run.taskId}: spawn claude in ${run.repoPath}`)
+  }
   notify()
 }
 

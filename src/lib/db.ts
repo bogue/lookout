@@ -1,13 +1,18 @@
 import Database from '@tauri-apps/plugin-sql'
 import type { Alert, AlertKind, MyPr, PrColumn, ReviewTask, Stage } from '../types'
 import { type AlertScope, inScope } from './alerts'
+import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
 let db: Database | null = null
 
 const getDb = async () => {
-  if (!db) db = await Database.load('sqlite:lookout.db')
+  if (!db)
+    db = await Database.load('sqlite:lookout.db').catch((e) => {
+      logError('db', e, 'load sqlite:lookout.db') // a locked/corrupt file leaves every board empty
+      throw e
+    })
   return db
 }
 

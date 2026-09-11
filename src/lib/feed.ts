@@ -1,6 +1,7 @@
 import type { PrState, ReviewFlavor, ReviewTask } from '../types'
 import { reviewFileTs } from './alerts'
 import { fetchPrTimeline, type GhTimelineEvent } from './gh'
+import { logError, logInfo } from './log'
 import { isBot, reviewFlavor } from './prboard'
 import { sessionsForBranch } from './sessions'
 
@@ -104,7 +105,10 @@ export const buildFeed = async (
     })
 
   if (task.repoPath) {
-    const sessions = await sessionsForBranch(task.repoPath, task.branch).catch(() => [])
+    const sessions = await sessionsForBranch(task.repoPath, task.branch).catch((e) => {
+      logError('feed', e, `sessions for ${task.branch} in ${task.repoPath}`)
+      return []
+    })
     for (const s of sessions)
       if (s.ts)
         events.push({
@@ -122,6 +126,8 @@ export const buildFeed = async (
     if (ts) events.push({ ts, icon: '📄', actor: 'claude', text: 'review report created', filePath: f, mine: true })
   }
 
+  // an empty timeline here is indistinguishable on screen from a PR with no activity, so say which
+  // one it was — the gh error itself is already logged by gh.ts
   const gh = await fetchPrTimeline(task.repo, task.prNumber).catch(() => [])
   for (const e of gh) {
     const mine = isMine(e.actor)
@@ -138,6 +144,7 @@ export const buildFeed = async (
   }
 
   const asc = events.sort((a, b) => a.ts.localeCompare(b.ts))
+  logInfo('feed', `${task.repo}#${task.prNumber}: ${asc.length} events (${gh.length} from the github timeline)`)
   // chronological: newest last, next to the reply input
   return { feed: groupCommits(asc), summary: deriveSummary(gh) }
 }

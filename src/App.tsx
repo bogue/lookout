@@ -10,6 +10,7 @@ import {
   DEFAULT_REVIEW_BUTTONS,
   getConfig,
   setAnimations,
+  setLogging,
   setPrButtons,
   setRepos,
   setReviewButtons,
@@ -36,6 +37,7 @@ import {
   upsertMyPr,
 } from './lib/db'
 import type { TimelineSummary } from './lib/feed'
+import { logError, logWarn, setLogEnabled } from './lib/log'
 import { syncMyPrs } from './lib/myprs'
 import { onNotificationClick } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
@@ -94,6 +96,7 @@ const App = () => {
     reviewButtons: DEFAULT_REVIEW_BUTTONS,
     prButtons: DEFAULT_PR_BUTTONS,
     animations: true,
+    logging: false,
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -129,6 +132,7 @@ const App = () => {
       setLastSync(new Date())
     } catch (e) {
       setError(String(e))
+      logError('sync', e)
     } finally {
       busy.current = false
       setSyncing(false)
@@ -163,6 +167,7 @@ const App = () => {
       runSync(async () => {
         const cfg = await getConfig()
         setConfig(cfg)
+        setLogEnabled(cfg.logging)
         // run both boards at once: the PR board used to queue behind ~17 s of Reviews sync
         const [tasks, prs] = await Promise.all([syncAll(), syncMyPrs(cfg)])
         setTasks(tasks)
@@ -318,11 +323,19 @@ const App = () => {
   // Runs from wherever the branch is checked out: a PR branch is usually in a worktree, and starting
   // in the clone would leave claude on whatever unrelated branch the clone happens to sit on.
   const runButton = async (t: ReviewTask, board: ButtonBoard, button: ActionButton) => {
-    if (!t.repoPath) return
+    if (!t.repoPath) {
+      // nothing visible happens on click when the repo has no local clone in Settings — say so in the log
+      logWarn('run', `${t.id}: no local clone configured for ${t.repo}, cannot run "${button.label}"`)
+      return
+    }
     setPanelTaskId(t.id)
     const prompt = fillPrompt(button.prompt, t.branch, t.prNumber)
-    const cwd = await pathForBranch(t.repoPath, t.branch)
-    await startRun(t.id, button.label, board, prompt, cwd, runCallbacks(board, button), ACTION_TOOLS)
+    try {
+      const cwd = await pathForBranch(t.repoPath, t.branch)
+      await startRun(t.id, button.label, board, prompt, cwd, runCallbacks(board, button), ACTION_TOOLS)
+    } catch (e) {
+      logError('run', e, `${t.id}: "${button.label}"`)
+    }
   }
 
   // Discovery / search "review" shortcut: add the PR to the board, then run the first review button.
@@ -633,6 +646,11 @@ const App = () => {
             }}
             onSaveAnimations={async (on) => {
               await setAnimations(on)
+              setConfig(await getConfig())
+            }}
+            onSaveLogging={async (on) => {
+              await setLogging(on)
+              setLogEnabled(on) // takes effect on the next line written, not on the next sync
               setConfig(await getConfig())
             }}
           />
