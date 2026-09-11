@@ -7,6 +7,7 @@ import { approvePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
 import { openPrWindow } from '../lib/prwindow'
 import type { Run, RunLine } from '../lib/runs'
+import { sessionCwd } from '../lib/sessions'
 import { canApproveFrom, STAGES } from '../lib/stages'
 import { timeAgo } from '../lib/time'
 import type { ActionButton, ReviewTask, Stage } from '../types'
@@ -328,9 +329,14 @@ export const SessionPanel = ({
   const showReply = (!!run && run.status !== 'closed') || (!!sessionId && !!task.repoPath)
   const canReply = !running && !!sessionId && (!!run || !!task.repoPath)
 
+  // Resuming only works from the directory the session ran in, which for a PR branch is usually a
+  // worktree, not the clone. A live run already knows its own cwd; otherwise go find it.
+  const checkoutFor = async (id: string) =>
+    run?.sessionId === id ? run.repoPath : await sessionCwd(task.repoPath ?? '', id)
+
   const copySessionId = async () => {
     if (!sessionId || !task.repoPath) return
-    await writeText(`cd ${task.repoPath} && claude --resume ${sessionId}`)
+    await writeText(`cd ${await checkoutFor(sessionId)} && claude --resume ${sessionId}`)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
@@ -361,7 +367,7 @@ export const SessionPanel = ({
   // Ghostty deep link; falls back to copying the resume command when Ghostty is missing
   const resumeSession = async (id: string) => {
     if (!task.repoPath) return
-    const launched = await resumeInGhostty(task.repoPath, id)
+    const launched = await resumeInGhostty(await checkoutFor(id), id)
     if (!launched) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)

@@ -44,9 +44,11 @@ import { fillPrompt } from './lib/prompt'
 import { sortReposByNames } from './lib/repoorder'
 import { scanReviewFiles } from './lib/reviews'
 import { cancelRun, closeRun, getRun, getRuns, killRun, replyRun, resumeRun, startRun, subscribeRuns } from './lib/runs'
+import { sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { syncAll, syncTaskAlerts } from './lib/sync'
 import { initTray, setTrayCount, showMainWindow } from './lib/tray'
+import { pathForBranch } from './lib/worktrees'
 import type {
   ActionButton,
   Alert,
@@ -313,11 +315,14 @@ const App = () => {
   }
 
   // Start a configurable button's prompt as a claude run for the given task/board.
+  // Runs from wherever the branch is checked out: a PR branch is usually in a worktree, and starting
+  // in the clone would leave claude on whatever unrelated branch the clone happens to sit on.
   const runButton = async (t: ReviewTask, board: ButtonBoard, button: ActionButton) => {
     if (!t.repoPath) return
     setPanelTaskId(t.id)
     const prompt = fillPrompt(button.prompt, t.branch, t.prNumber)
-    await startRun(t.id, button.label, board, prompt, t.repoPath, runCallbacks(board, button), ACTION_TOOLS)
+    const cwd = await pathForBranch(t.repoPath, t.branch)
+    await startRun(t.id, button.label, board, prompt, cwd, runCallbacks(board, button), ACTION_TOOLS)
   }
 
   // Discovery / search "review" shortcut: add the PR to the board, then run the first review button.
@@ -642,23 +647,16 @@ const App = () => {
           myName={config.githubName}
           variant={panelIsPr ? 'pr' : 'review'}
           buttons={visibleButtons(panelIsPr ? config.prButtons : config.reviewButtons, panelTask)}
-          onReply={(text) => {
+          onReply={async (text) => {
             const board: ButtonBoard = panelIsPr ? 'pr' : 'review'
             const sessionId = panelTask.sessionIds.at(-1)
             const run = getRun(panelTask.id)
             if (run) replyRun(panelTask.id, text, runCallbacks(board), sessionId)
-            // no live run (app restarted, run dismissed): resume the session directly
+            // no live run (app restarted, run dismissed): resume the session directly, from the
+            // checkout it was started in — `claude --resume` only sees that directory's sessions
             else if (panelTask.repoPath && sessionId) {
-              resumeRun(
-                panelTask.id,
-                'reply',
-                board,
-                panelTask.repoPath,
-                text,
-                sessionId,
-                runCallbacks(board),
-                ACTION_TOOLS,
-              )
+              const cwd = await sessionCwd(panelTask.repoPath, sessionId)
+              resumeRun(panelTask.id, 'reply', board, cwd, text, sessionId, runCallbacks(board), ACTION_TOOLS)
             }
           }}
           onDismissRun={() => killRun(panelTask.id)}

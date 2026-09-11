@@ -111,7 +111,7 @@ export const buildFeed = async (
           ts: s.ts,
           icon: '🤖',
           actor: 'you',
-          text: `started /${s.command} session`,
+          text: s.command ? `started /${s.command} session` : 'started a claude session',
           mine: true,
           sessionId: s.sessionId,
         })

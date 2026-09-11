@@ -70,6 +70,7 @@ Requirements: Rust toolchain, `gh` (authenticated), `claude` CLI.
 3. **Reviews** — Watching / Needs Review / Reviewed / Follow-up / Done. Drag cards to triage or prioritize. Merged or closed PRs auto-move to Done and drop off after 24 h.
 4. **Pull Requests** — your own PRs: Waiting / In Review / Ready to merge / Done. A human review moves a card to In Review, an approval to Ready to merge (where the CI tag is all you need to decide). Cards only ever move *forward* on their own, so re-requesting a review or flipping back to draft can't drop one out of In Review. Bot reviews (Cursor, Sonar) show a 🤖 badge but never move a card — they're lint, not review. Drag anywhere, in either direction: a drop stays put until GitHub itself changes its mind. Done holds what you merged or closed today and empties overnight.
 5. **PR panel** — click a card: chat-style history (sessions, reports, commits, reviews), dispatch buttons, stage selector, one-click approve when follow-up is all green, resume sessions in Ghostty.
+6. **Worktrees** — you only ever register the clone path. A branch checked out in a linked worktree is followed there: actions run in that worktree, its sessions and `AI_TASKS/code-review/` reports show up on the card, and resume opens the directory the session actually ran in.
 
 ## `lookout` CLI
 
