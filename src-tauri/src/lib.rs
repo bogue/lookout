@@ -124,6 +124,12 @@ pub fn run() {
                             sql: include_str!("../migrations/012_needs_review.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 13,
+                            description: "store the pull request board",
+                            sql: include_str!("../migrations/013_my_prs.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),
