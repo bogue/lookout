@@ -68,7 +68,8 @@ Requirements: Rust toolchain, `gh` (authenticated), `claude` CLI.
 1. **Settings** — add local clone paths; `owner/repo` is detected from each clone's git origin. Your GitHub login is auto-detected; your own PRs are never listed.
 2. **Discovery** — new open PRs land here. **Review** (add to board + dispatch `/do-review`), **Watch** (add to board), **Ignore** (hide forever). PRs you already reviewed or commented on skip Discovery.
 3. **Reviews** — Watching / Needs Review / Reviewed / Follow-up / Done. Drag cards to triage or prioritize. Merged or closed PRs auto-move to Done and drop off after 24 h.
-4. **PR panel** — click a card: chat-style history (sessions, reports, commits, reviews), dispatch buttons, stage selector, one-click approve when follow-up is all green, resume sessions in Ghostty.
+4. **Pull Requests** — your own PRs: Waiting / In Review / Ready to merge / Done. A human review moves a card to In Review, an approval to Ready to merge (where the CI tag is all you need to decide). Cards only ever move *forward* on their own, so re-requesting a review or flipping back to draft can't drop one out of In Review. Bot reviews (Cursor, Sonar) show a 🤖 badge but never move a card — they're lint, not review. Drag anywhere, in either direction: a drop stays put until GitHub itself changes its mind. Done holds what you merged or closed today and empties overnight.
+5. **PR panel** — click a card: chat-style history (sessions, reports, commits, reviews), dispatch buttons, stage selector, one-click approve when follow-up is all green, resume sessions in Ghostty.
 
 ## `lookout` CLI
 
