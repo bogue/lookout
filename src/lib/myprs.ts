@@ -4,7 +4,7 @@ import { getConfig, setGithubUser } from './config'
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, pruneMyPrRepos, syncAlerts, upsertMyPr } from './db'
 import { fetchLogin, fetchPrExchange, listMyPrs } from './gh'
 import { notify } from './notify'
-import { toMyPr } from './prboard'
+import { isBoardable, toMyPr } from './prboard'
 import { resolveColumn } from './prcolumns'
 import { type LegacyPrStore, migrateLegacyPrStore } from './proverrides'
 import { startOfToday } from './time'
@@ -22,8 +22,9 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
     await setGithubUser(me)
   }
 
+  const today = startOfToday()
   await pruneMyPrRepos(cfg.repos.map((r) => r.repo))
-  await pruneDoneMyPrs(startOfToday()) // Done keeps only what was merged or closed today
+  await pruneDoneMyPrs(today) // drops what aged out of Done since the last pass
 
   const stored = new Map((await allMyPrs()).map((p) => [p.id, p]))
   // placements and drag positions from the retired pr-overrides.json, carried over once so nobody
@@ -42,6 +43,7 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
     const seen: string[] = []
     for (const r of raw) {
       const fresh = toMyPr(r, repo, path)
+      if (!isBoardable(fresh, today)) continue // merged/closed before today: not this board's business
       const prev = stored.get(fresh.id)
       seen.push(fresh.id)
       if (prev) {

@@ -179,12 +179,32 @@ describe('syncMyPrs — Done is scoped to today', () => {
     expect(midnight.toDateString()).toBe(new Date().toDateString())
   })
 
-  it('boards a merged PR into Done with its merge timestamp', async () => {
-    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ state: 'MERGED', mergedAt: '2026-09-11T09:00:00Z' })])
+  it('boards a PR merged today, with its merge timestamp', async () => {
+    const mergedAt = new Date(Date.now() - 60_000).toISOString() // a minute ago, whenever "now" is
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ state: 'MERGED', mergedAt })])
     await syncMyPrs(config([REPO]))
     const row = written(`${REPO}#1`)
     expect(row?.column).toBe('done')
-    expect(row?.doneAt).toBe('2026-09-11T09:00:00Z')
+    expect(row?.doneAt).toBe(mergedAt)
+  })
+
+  // the listing hands back months of merges on every pass; boarding them and leaving it to the prune
+  // would re-add them as fast as they're deleted, and Done would never empty
+  it('does not board a PR merged before today', async () => {
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ state: 'MERGED', mergedAt: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
+    ])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toBeUndefined()
+  })
+
+  it('drops a stored row once its merge falls out of today', async () => {
+    // stale rows aren't in `seen`, so the per-repo reconcile removes them
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ state: 'MERGED', mergedAt: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
+    ])
+    await syncMyPrs(config([REPO]))
+    expect(vi.mocked(dropMyPrsMissingFrom)).toHaveBeenCalledWith(REPO, [])
   })
 })
 

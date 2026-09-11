@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GhMyPr } from './gh'
-import { isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
+import { isBoardable, isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
 
 const REPO = 'owner/repo'
 
@@ -167,4 +167,26 @@ describe('toMyPr', () => {
     expect(pr.ciState).toBe('fail')
     expect(pr.id).toBe('owner/repo#42')
   })
+})
+
+describe('isBoardable — Done is the current day only', () => {
+  const TODAY = '2026-09-11T00:00:00.000Z'
+
+  it('always boards an open PR, whatever its doneAt', () => {
+    expect(isBoardable({ state: 'open', doneAt: null }, TODAY)).toBe(true)
+    expect(isBoardable({ state: 'open', doneAt: '2020-01-01T00:00:00Z' }, TODAY)).toBe(true)
+  })
+
+  it('boards a PR merged or closed today', () => {
+    expect(isBoardable({ state: 'merged', doneAt: '2026-09-11T09:00:00Z' }, TODAY)).toBe(true)
+    expect(isBoardable({ state: 'closed', doneAt: '2026-09-11T23:59:00Z' }, TODAY)).toBe(true)
+  })
+
+  // the listing returns months of merges every sync; boarding them and leaving it to the prune would
+  // re-add them as fast as they're deleted
+  it('refuses one merged before today', () =>
+    expect(isBoardable({ state: 'merged', doneAt: '2026-09-10T23:59:00Z' }, TODAY)).toBe(false))
+
+  it('refuses one with no timestamp at all', () =>
+    expect(isBoardable({ state: 'merged', doneAt: null }, TODAY)).toBe(false))
 })

@@ -55,6 +55,13 @@ export const classifyColumn = (pr: { state: PrState; isDraft: boolean; humanRevi
   return 'waiting'
 }
 
+// Done holds only the current day's work, so a PR merged or closed before `since` isn't boarded at
+// all. Storing it and leaving it to the next pass's prune doesn't work: the listing returns it again
+// every sync, so it would be re-added as fast as it's deleted and Done would fill with months of
+// merges. `since` is the local start of day (startOfToday).
+export const isBoardable = (pr: { state: PrState; doneAt: string | null }, since: string): boolean =>
+  pr.state === 'open' || (pr.doneAt !== null && pr.doneAt >= since)
+
 // Map a raw gh PR into the facts the board stores. `column` is only the starting placement for a PR
 // we've never seen; for a known one the caller re-resolves it against the stored row (resolveColumn).
 export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr => {
