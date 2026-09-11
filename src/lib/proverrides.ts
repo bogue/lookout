@@ -1,54 +1,39 @@
-import { load, type Store } from '@tauri-apps/plugin-store'
-import type { PrColumn, PrOverride } from '../types'
+import { load } from '@tauri-apps/plugin-store'
+import type { PrColumn } from '../types'
 
-// Manual column placements for my PRs, keyed by PR id. Persisted so a hand-off survives restarts.
-// (The Pull Requests board is otherwise derived live; an override pins a card until GitHub moves.)
-let store: Store | null = null
-const getStore = async () => {
-  if (!store) store = await load('pr-overrides.json')
-  return store
-}
+// Retired store. Manual placements and drag positions used to live in `pr-overrides.json` because the
+// PR board had no table of its own; both now live in `my_prs` (migration 013).
+//
+// The mechanism is gone — an override was a pin against a baseline, dropped as soon as the derived
+// column moved for any reason, which is what made cards jump. But the placements themselves are real
+// user intent, so they are carried across once as the starting `board_column` and the file is emptied.
+export type LegacyPrStore = { columns: Record<string, PrColumn>; orders: Record<string, number> }
 
-const isOverride = (v: unknown): v is PrOverride =>
-  typeof v === 'object' && v !== null && 'column' in v && 'baseline' in v
+const COLUMNS: PrColumn[] = ['waiting', 'in_review', 'ready', 'done']
+const isColumn = (v: unknown): v is PrColumn => typeof v === 'string' && COLUMNS.includes(v as PrColumn)
 
-export const getOverrides = async (): Promise<Record<string, PrOverride>> => {
-  const raw = (await (await getStore()).get<Record<string, unknown>>('overrides')) ?? {}
-  const out: Record<string, PrOverride> = {}
-  // keep only well-formed entries (drops any pre-baseline format, which self-heals old sticky pins)
-  for (const [id, v] of Object.entries(raw)) if (isOverride(v)) out[id] = v
-  return out
-}
+export const migrateLegacyPrStore = async (): Promise<LegacyPrStore> => {
+  const store = await load('pr-overrides.json').catch(() => null)
+  if (!store) return { columns: {}, orders: {} }
 
-export const setOverride = async (id: string, column: PrColumn, baseline: PrColumn) => {
-  const s = await getStore()
-  const all = (await s.get<Record<string, PrOverride>>('overrides')) ?? {}
-  all[id] = { column, baseline }
-  await s.set('overrides', all)
-}
-
-export const clearOverride = async (id: string) => {
-  const s = await getStore()
-  const all = (await s.get<Record<string, PrOverride>>('overrides')) ?? {}
-  if (id in all) {
-    delete all[id]
-    await s.set('overrides', all)
+  const columns: Record<string, PrColumn> = {}
+  const rawColumns = (await store.get<Record<string, unknown>>('overrides')) ?? {}
+  for (const [id, v] of Object.entries(rawColumns)) {
+    // two shapes ever existed: {column, baseline}, and a bare column string before baselines landed
+    const column = isColumn(v)
+      ? v
+      : isColumn((v as { column?: unknown } | null)?.column)
+        ? (v as { column: PrColumn }).column
+        : null
+    if (column) columns[id] = column
   }
-}
 
-// Manual drag positions on the PR board, keyed by PR id (rank within its column; unranked sorts by default)
-export const getPrOrders = async (): Promise<Record<string, number>> => {
-  const raw = (await (await getStore()).get<Record<string, unknown>>('order')) ?? {}
-  const out: Record<string, number> = {}
-  for (const [id, v] of Object.entries(raw)) if (typeof v === 'number') out[id] = v
-  return out
-}
+  const orders: Record<string, number> = {}
+  const rawOrders = (await store.get<Record<string, unknown>>('order')) ?? {}
+  for (const [id, v] of Object.entries(rawOrders)) if (typeof v === 'number') orders[id] = v
 
-export const setPrOrders = async (orderedIds: string[]) => {
-  const s = await getStore()
-  const all = (await s.get<Record<string, number>>('order')) ?? {}
-  orderedIds.forEach((id, i) => {
-    all[id] = (i + 1) * 10
-  })
-  await s.set('order', all)
+  await store.delete('overrides')
+  await store.delete('order')
+  await store.save()
+  return { columns, orders }
 }

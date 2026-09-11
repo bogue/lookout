@@ -77,6 +77,7 @@ const myPr = (over: Partial<MyPr> = {}): MyPr => ({
   humanReview: 'commented',
   botReview: null,
   ciState: null,
+  doneAt: null,
   ...over,
 })
 

@@ -17,6 +17,7 @@ import {
 import {
   addSessionId,
   allAlerts,
+  allMyPrs,
   allTasks,
   archiveAlert,
   archiveAllAlerts,
@@ -25,18 +26,21 @@ import {
   markAllAlertsRead,
   setFollowupSummary,
   setLinks,
+  setMyPrColumn,
+  setMyPrOrders,
   setOrders,
   setPrState,
   setSeen,
   setSnoozed,
   setStage,
+  upsertMyPr,
 } from './lib/db'
 import type { TimelineSummary } from './lib/feed'
 import { syncMyPrs } from './lib/myprs'
 import { onNotificationClick } from './lib/notify'
-import { classifyColumn, resolveOverride } from './lib/prboard'
+import { classifyColumn } from './lib/prboard'
+import { resolveColumn } from './lib/prcolumns'
 import { fillPrompt } from './lib/prompt'
-import { setOverride, setPrOrders } from './lib/proverrides'
 import { sortReposByNames } from './lib/repoorder'
 import { scanReviewFiles } from './lib/reviews'
 import { cancelRun, closeRun, getRun, getRuns, killRun, replyRun, resumeRun, startRun, subscribeRuns } from './lib/runs'
@@ -106,6 +110,10 @@ const App = () => {
 
   const reload = useCallback(async () => setTasks(await allTasks()), [])
 
+  // The PR board reads its own table, so it paints immediately at launch instead of staying blank
+  // until the first sync answers (which used to mean ~28 s, since refresh() awaited syncAll first).
+  const reloadMyPrs = useCallback(async () => setMyPrs(await allMyPrs()), [])
+
   const reloadAlerts = useCallback(async () => setAlerts(await allAlerts()), [])
 
   // serialize syncs (never overlap) and surface the shared syncing/error/lastSync UI state
@@ -151,10 +159,12 @@ const App = () => {
   const refresh = useCallback(
     () =>
       runSync(async () => {
-        setTasks(await syncAll())
         const cfg = await getConfig()
         setConfig(cfg)
-        setMyPrs(await syncMyPrs(cfg))
+        // run both boards at once: the PR board used to queue behind ~17 s of Reviews sync
+        const [tasks, prs] = await Promise.all([syncAll(), syncMyPrs(cfg)])
+        setTasks(tasks)
+        setMyPrs(prs)
         setAlerts(await allAlerts())
         const now = Date.now()
         tasksSyncedAt.current = now
@@ -168,6 +178,8 @@ const App = () => {
     (v: View) => {
       setView(v)
       const now = Date.now()
+      // runSync drops a call while another sync is in flight; that's fine here because the boards
+      // now paint from their tables, so there is never a blank waiting on this
       if ((v === 'board' || v === 'discovery') && now - tasksSyncedAt.current >= MIN_PARTIAL_MS) syncTasks()
       else if (v === 'pulls' && now - pullsSyncedAt.current >= MIN_PARTIAL_MS) syncPulls()
     },
@@ -178,11 +190,12 @@ const App = () => {
     initTray()
     getConfig().then(setConfig)
     reload()
+    reloadMyPrs()
     reloadAlerts()
     refresh()
     const interval = setInterval(refresh, POLL_MS)
     return () => clearInterval(interval)
-  }, [refresh, reload, reloadAlerts])
+  }, [refresh, reload, reloadMyPrs, reloadAlerts])
 
   // The `lookout` CLI pings the app's socket after it writes, so a card moved from a terminal shows
   // up at once instead of at the next sync. The event is only a hint that something changed —
@@ -354,8 +367,9 @@ const App = () => {
     if (button && !getRun(pr.id)) runButton(myPrToTask(pr), 'pr', button)
   }
 
-  // drag-drop on the PR board (optimistic): persist the new positions, and when the column changed,
-  // pin it as an override against the GitHub-derived column so it self-heals once real state moves
+  // drag-drop on the PR board (optimistic): the drop is the placement, in either direction. It sticks
+  // because derived_column is left as it was — the next sync sees GitHub hasn't changed its mind and
+  // leaves the card alone (src/lib/prcolumns.ts).
   const reorderMyPr = async (pr: MyPr, column: PrColumn, orderedIds: string[]) => {
     const pos = new Map(orderedIds.map((id, i) => [id, (i + 1) * 10]))
     setMyPrs((prev) =>
@@ -364,31 +378,30 @@ const App = () => {
         return p.id === pr.id ? { ...p, column, sortOrder } : { ...p, sortOrder }
       }),
     )
-    if (pr.column !== column) await setOverride(pr.id, column, pr.derivedColumn)
-    await setPrOrders(orderedIds)
+    if (pr.column !== column) await setMyPrColumn(pr.id, column)
+    await setMyPrOrders(orderedIds)
   }
 
-  // Per-card refresh on open (PR board): re-derive the opened card from the timeline just fetched for its
-  // feed, without a full list sync. Only review verdicts + PR state come from the timeline; CI/draft stay
-  // as the last sync left them. The active hand-off is reconstructed from the card (a divergence between
-  // effective and derived column), so resolveOverride self-heals it exactly as a full sync would.
-  const refreshMyPrFromTimeline = (id: string, s: TimelineSummary) => {
-    setMyPrs((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p
-        const state = s.prState ?? p.state
-        if (state === 'closed') return p // closed-unmerged PRs aren't boarded; let the next sync drop it
-        const derivedColumn = classifyColumn({
-          state,
-          isDraft: p.isDraft,
-          humanReview: s.humanReview,
-          botReview: s.botReview,
-        })
-        const override = p.column !== p.derivedColumn ? { column: p.column, baseline: p.derivedColumn } : undefined
-        const { column } = resolveOverride(derivedColumn, override)
-        return { ...p, state, humanReview: s.humanReview, botReview: s.botReview, derivedColumn, column }
-      }),
-    )
+  // Per-card refresh on open (PR board): re-derive the opened card from the timeline just fetched for
+  // its feed, without a full list sync. Only review verdicts + PR state come from the timeline;
+  // CI/draft stay as the last sync left them. Goes through resolveColumn and the table like any sync,
+  // so opening a card can never demote it and the placement survives the next poll.
+  const refreshMyPrFromTimeline = async (id: string, s: TimelineSummary) => {
+    const prev = myPrs.find((p) => p.id === id)
+    if (!prev) return
+    const state = s.prState ?? prev.state
+    const derivedColumn = classifyColumn({ state, isDraft: prev.isDraft, humanReview: s.humanReview })
+    const next: MyPr = {
+      ...prev,
+      state,
+      humanReview: s.humanReview,
+      botReview: s.botReview,
+      derivedColumn,
+      column: resolveColumn(prev.column, prev.derivedColumn, derivedColumn),
+      doneAt: state === 'open' ? null : (prev.doneAt ?? new Date().toISOString()),
+    }
+    setMyPrs((cur) => cur.map((p) => (p.id === id ? next : p)))
+    await upsertMyPr(next)
   }
 
   // Per-card refresh on open (Reviews board): only PR state is safely derivable from the timeline

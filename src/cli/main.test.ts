@@ -42,6 +42,24 @@ afterEach(() => {
   delete process.env.LOOKOUT_DB
 })
 
+const seedMyPr = (id: string, column: string, branch = 'my-feature', number = 7) => {
+  const h = new DatabaseSync(dbPath)
+  h.prepare(
+    `INSERT INTO my_prs (id, repo, repo_path, number, title, url, branch, pr_created_at, state,
+       ci_state, derived_column, board_column, updated_at)
+     VALUES (?, 'owner/repo', '/tmp/repo', ?, 'My PR', 'https://github.com/owner/repo/pull/7', ?,
+       '2026-09-01T00:00:00.000Z', 'open', 'pass', ?, ?, '2026-09-01T00:00:00.000Z')`,
+  ).run(id, number, branch, column, column)
+  h.close()
+}
+
+const columnOf = (id: string): string => {
+  const h = new DatabaseSync(dbPath)
+  const row = h.prepare('SELECT board_column FROM my_prs WHERE id = ?').get(id) as { board_column: string }
+  h.close()
+  return row.board_column
+}
+
 const stageOf = (id: string): string => {
   const h = new DatabaseSync(dbPath)
   const row = h.prepare('SELECT stage FROM tasks WHERE id = ?').get(id) as { stage: string }
@@ -52,7 +70,7 @@ const stageOf = (id: string): string => {
 describe('help and unknown commands', () => {
   it('prints usage with no arguments', () => {
     expect(cli()).toBe(EXIT.ok)
-    expect(out.join('')).toContain('lookout card list')
+    expect(out.join('')).toContain('lookout review list')
   })
 
   it('rejects an unknown command', () => {
@@ -70,7 +88,7 @@ describe('help and unknown commands', () => {
   })
 })
 
-describe('card list / show', () => {
+describe('review list / show', () => {
   it('lists cards with UI stage labels, not ids', () => {
     expect(cli('card', 'list')).toBe(EXIT.ok)
     expect(out.join('')).toContain('In Review')
@@ -182,9 +200,10 @@ describe('comments-pushed', () => {
 })
 
 describe('doctor', () => {
-  it('reports the database and card count', () => {
+  it('reports the database and both board counts', () => {
     expect(cli('doctor')).toBe(EXIT.ok)
-    expect(out.join('')).toContain('cards     1')
+    expect(out.join('')).toContain('review    1 cards')
+    expect(out.join('')).toContain('mine      0 pull requests')
   })
 
   it('exits 3 when the app has never run', () => {
@@ -208,4 +227,123 @@ describe('the built binary', () => {
     expect(text).toContain('owner/repo#42')
     expect(text).toContain('stage      In Review')
   }, 60_000)
+})
+
+describe('lookout review — the old `card` spelling still works', () => {
+  it('accepts both names for the same command', () => {
+    expect(cli('review', 'list')).toBe(EXIT.ok)
+    const viaReview = out.join('')
+    out = []
+    expect(cli('card', 'list')).toBe(EXIT.ok)
+    expect(out.join('')).toBe(viaReview)
+  })
+
+  it('moves a card under either name', () => {
+    expect(cli('card', 'reviewed', '--id', 'owner/repo#42')).toBe(EXIT.ok)
+    expect(stageOf('owner/repo#42')).toBe('reviewed')
+  })
+
+  it('still takes the old --card selector flag', () => {
+    expect(cli('review', 'show', '--card', 'owner/repo#42')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('owner/repo#42')
+  })
+
+  it('names the group it did not understand', () => {
+    expect(cli('mine', 'frobnicate')).toBe(EXIT.error)
+    expect(err.join('')).toContain('unknown mine command')
+  })
+})
+
+describe('lookout mine — my own PRs', () => {
+  it('lists nothing when the board is empty', () => {
+    expect(cli('mine', 'list')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('(no pull requests)')
+  })
+
+  it('lists a PR with its column and CI', () => {
+    seedMyPr('owner/repo#7', 'ready')
+    expect(cli('mine', 'list')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('owner/repo#7')
+    expect(out.join('')).toContain('Ready to merge')
+    expect(out.join('')).toContain('pass')
+  })
+
+  it('filters by column', () => {
+    seedMyPr('owner/repo#7', 'ready')
+    seedMyPr('owner/repo#8', 'waiting', 'other', 8)
+    expect(cli('mine', 'list', '--column', 'ready')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('owner/repo#7')
+    expect(out.join('')).not.toContain('owner/repo#8')
+  })
+
+  it('shows one PR', () => {
+    seedMyPr('owner/repo#7', 'in_review')
+    expect(cli('mine', 'show', '--id', 'owner/repo#7')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('column     In Review')
+  })
+
+  it('moves a PR forward with the sugar verb', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    expect(cli('mine', 'ready', '--id', 'owner/repo#7')).toBe(EXIT.ok)
+    expect(columnOf('owner/repo#7')).toBe('ready')
+  })
+
+  it('accepts the board label as well as the id', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    expect(cli('mine', 'column', 'Ready to merge', '--id', 'owner/repo#7')).toBe(EXIT.ok)
+    expect(columnOf('owner/repo#7')).toBe('ready')
+  })
+
+  it('refuses to move a PR backwards without --force', () => {
+    seedMyPr('owner/repo#7', 'ready')
+    expect(cli('mine', 'waiting', '--id', 'owner/repo#7')).toBe(EXIT.ok)
+    expect(columnOf('owner/repo#7')).toBe('ready')
+    expect(out.join('')).toContain('no change')
+  })
+
+  it('moves it backwards with --force', () => {
+    seedMyPr('owner/repo#7', 'ready')
+    expect(cli('mine', 'waiting', '--id', 'owner/repo#7', '--force')).toBe(EXIT.ok)
+    expect(columnOf('owner/repo#7')).toBe('waiting')
+  })
+
+  it('leaves derived_column alone, so the placement survives the next sync', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    cli('mine', 'ready', '--id', 'owner/repo#7')
+    const h = new DatabaseSync(dbPath)
+    const row = h.prepare('SELECT derived_column FROM my_prs WHERE id = ?').get('owner/repo#7') as {
+      derived_column: string
+    }
+    h.close()
+    expect(row.derived_column).toBe('waiting')
+  })
+
+  it('writes nothing on --dry-run', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    expect(cli('mine', 'ready', '--id', 'owner/repo#7', '--dry-run')).toBe(EXIT.ok)
+    expect(columnOf('owner/repo#7')).toBe('waiting')
+    expect(out.join('')).toContain('would move')
+  })
+
+  it('resolves by PR number', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    expect(cli('mine', 'show', '--pr', '7', '--repo', 'owner/repo')).toBe(EXIT.ok)
+    expect(out.join('')).toContain('owner/repo#7')
+  })
+
+  it('exits noMatch when nothing matches', () => {
+    expect(cli('mine', 'show', '--id', 'owner/repo#404')).toBe(EXIT.noMatch)
+  })
+
+  it('rejects an unknown column', () => {
+    seedMyPr('owner/repo#7', 'waiting')
+    expect(cli('mine', 'column', 'nowhere', '--id', 'owner/repo#7')).toBe(EXIT.error)
+    expect(err.join('')).toContain('unknown column')
+  })
+
+  it('emits json', () => {
+    seedMyPr('owner/repo#7', 'ready')
+    expect(cli('mine', 'list', '--json')).toBe(EXIT.ok)
+    expect(JSON.parse(out.join(''))[0]).toMatchObject({ id: 'owner/repo#7', column: 'ready', ci_state: 'pass' })
+  })
 })

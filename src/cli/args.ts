@@ -1,6 +1,6 @@
-// Tiny flag parser: enough for `lookout card reviewed --pr 42 --json`, no dependency.
+// Tiny flag parser: enough for `lookout review reviewed --pr 42 --json`, no dependency.
 export type Args = {
-  path: string[] // positional words, e.g. ['card', 'stage', 'reviewed']
+  path: string[] // positional words, e.g. ['review', 'stage', 'reviewed']
   flags: Record<string, string | true>
 }
 

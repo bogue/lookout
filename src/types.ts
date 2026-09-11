@@ -18,7 +18,7 @@ export type PrColumn = 'waiting' | 'in_review' | 'ready' | 'done'
 // the latest review verdict from a given side (human or bot); null = none yet
 export type ReviewFlavor = 'approved' | 'changes_requested' | 'commented' | null
 
-// a pull request authored by me — columns are derived live from GitHub each sync
+// a pull request authored by me, as stored in the `my_prs` table
 export type MyPr = {
   id: string // owner/repo#number
   repo: string
@@ -31,16 +31,13 @@ export type MyPr = {
   state: PrState
   isDraft: boolean
   sortOrder: number | null // manual drag position within a column (null = unranked, drafts sort last)
-  column: PrColumn // effective column (manual override applied)
-  derivedColumn: PrColumn // column purely from GitHub state (override baseline)
+  column: PrColumn // effective placement — a high-water mark, not a fresh derivation (prcolumns.ts)
+  derivedColumn: PrColumn // what classifyColumn last said; `column` only moves when this changes
   humanReview: ReviewFlavor
-  botReview: ReviewFlavor
+  botReview: ReviewFlavor // shown as a badge only — bot reviews never move the column
   ciState: CiState
+  doneAt: string | null // mergedAt / closedAt; Done keeps only the current day's cards
 }
-
-// a manual hand-off: pin `column`, recorded against the GitHub-derived column at drop time.
-// When the derived column later moves off `baseline`, the override is stale and gets dropped.
-export type PrOverride = { column: PrColumn; baseline: PrColumn }
 
 export type FollowupSummary = {
   addressed: number

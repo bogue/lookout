@@ -1,10 +1,11 @@
+import { PR_COLUMNS } from '../lib/prboard'
 import { parseStage, STAGE_LABEL, STAGES } from '../lib/stages'
-import type { ReviewTask, Stage } from '../types'
+import type { MyPr, PrColumn, ReviewTask, Stage } from '../types'
 import { type Args, flagNumber, flagString, parseArgs } from './args'
 import { type Db, NoDatabaseError, openDb } from './db'
 import { notifyApp } from './notify'
 import { resolveDbPath } from './paths'
-import { AmbiguousError, NoMatchError, resolveCard, type Selector } from './resolve'
+import { AmbiguousError, NoMatchError, resolveCard, resolveMyPr, type Selector } from './resolve'
 
 // Exit codes are the CLI's contract with skills: 2 and 3 mean "nothing to do here", not failure.
 export const EXIT = { ok: 0, error: 1, noMatch: 2, noDb: 3, ambiguous: 4 } as const
@@ -19,7 +20,38 @@ const readStage = (input: string): Stage => {
   return stage
 }
 
-// `lookout card reviewed` and friends — sugar for `card stage <stage>`.
+// The two boards hold different work, and the command name is what says which: `review` is other
+// people's PRs (the review pipeline), `mine` is my own (the merge pipeline). `card` still works —
+// nothing can rewrite what someone already typed into a shell alias or a skill.
+const REVIEW_ALIASES = ['review', 'card']
+
+// Column names as typed: what the board calls them, dash-joined.
+const COLUMN_NAMES = PR_COLUMNS.map((c) => c.value.replace(/_/g, '-'))
+const COLUMN_LABEL: Record<PrColumn, string> = Object.fromEntries(PR_COLUMNS.map((c) => [c.value, c.label])) as Record<
+  PrColumn,
+  string
+>
+
+const readColumn = (input: string): PrColumn => {
+  const key = input.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const found = PR_COLUMNS.find(
+    (c) => c.value.replace(/[^a-z0-9]/g, '') === key || c.label.toLowerCase().replace(/[^a-z0-9]/g, '') === key,
+  )
+  if (!found) throw new Error(`unknown column "${input}" — expected one of: ${COLUMN_NAMES.join(', ')}`)
+  return found.value
+}
+
+// `lookout mine ready` and friends — sugar for `mine column <column>`.
+const VERB_COLUMN: Record<string, PrColumn> = {
+  waiting: 'waiting',
+  'in-review': 'in_review',
+  review: 'in_review',
+  ready: 'ready',
+  merged: 'done',
+  done: 'done',
+}
+
+// `lookout review reviewed` and friends — sugar for `review stage <stage>`.
 const VERB_STAGE: Record<string, Stage> = {
   reviewed: 'reviewed',
   'follow-up': 'followup',
@@ -29,20 +61,33 @@ const VERB_STAGE: Record<string, Stage> = {
   ignore: 'ignored',
 }
 
-const USAGE = `lookout — move Lookout review cards from the terminal
+const USAGE = `lookout — move Lookout cards from the terminal
 
-  lookout card list [--stage <s>] [--repo <r>]
-  lookout card show [selector]
-  lookout card stage <${STAGE_NAMES.join(' | ')}> [selector] [--force]
-  lookout card reviewed | follow-up | done | watch | ignore [selector]
-  lookout card comments-pushed [selector] --count <n> [--numbers 1,3] [--url <u>]
+other people's PRs — the review pipeline
+
+  lookout review list [--stage <s>] [--repo <r>]
+  lookout review show [selector]
+  lookout review stage <${STAGE_NAMES.join(' | ')}> [selector] [--force]
+  lookout review reviewed | follow-up | done | watch | ignore [selector]
+  lookout review comments-pushed [selector] --count <n> [--numbers 1,3] [--url <u>]
+
+your own PRs — the merge pipeline
+
+  lookout mine list [--column <c>] [--repo <r>]
+  lookout mine show [selector]
+  lookout mine column <${COLUMN_NAMES.join(' | ')}> [selector] [--force]
+  lookout mine waiting | in-review | ready | done [selector]
+
   lookout doctor
 
-selector   --card <id> | --pr <n> | --branch <b> [--repo <owner/repo>]
+selector   --id <id> | --pr <n> | --branch <b> [--repo <owner/repo>]
            defaults to the PR for the current repo + branch
 options    --json   machine-readable output
            --quiet  print nothing (exit code only)
            --dry-run  resolve and report, write nothing
+           --force  move backwards down a pipeline (both default to forward-only)
+
+\`lookout card …\` is the old name for \`lookout review …\` and still works.
 `
 
 type Ctx = {
@@ -54,7 +99,7 @@ type Ctx = {
 }
 
 const selectorFrom = (args: Args): Selector => ({
-  card: flagString(args.flags, 'card'),
+  id: flagString(args.flags, 'id') ?? flagString(args.flags, 'card'), // --card: the old spelling
   pr: flagNumber(args.flags, 'pr'),
   branch: flagString(args.flags, 'branch'),
   repo: flagString(args.flags, 'repo'),
@@ -74,7 +119,7 @@ const cardJson = (t: ReviewTask) => ({
   stage_label: STAGE_LABEL[t.stage],
 })
 
-// A stage move, shared by `card stage` and every sugar verb.
+// A stage move, shared by `review stage` and every sugar verb.
 const moveStage = (db: Db, ctx: Ctx, target: Stage, extra?: (id: string) => void): number => {
   const card = resolveCard(db, selectorFrom(ctx.args))
   if (ctx.dryRun) {
@@ -95,7 +140,7 @@ const moveStage = (db: Db, ctx: Ctx, target: Stage, extra?: (id: string) => void
   return EXIT.ok
 }
 
-const cardCommand = (db: Db, ctx: Ctx): number => {
+const reviewCommand = (db: Db, ctx: Ctx): number => {
   const [, sub, arg] = ctx.args.path
 
   if (!sub || sub === 'list') {
@@ -141,7 +186,81 @@ const cardCommand = (db: Db, ctx: Ctx): number => {
     })
   }
 
-  throw new Error(`unknown card command "${sub}"`)
+  throw new Error(`unknown ${ctx.args.path[0]} command "${sub}"`)
+}
+
+const prLine = (p: MyPr): string =>
+  `${p.id.padEnd(34)} ${COLUMN_LABEL[p.column].padEnd(15)} ${(p.ciState ?? '—').padEnd(8)} ${p.branch}`
+
+const prJson = (p: MyPr) => ({
+  id: p.id,
+  repo: p.repo,
+  repo_path: p.repoPath,
+  branch: p.branch,
+  pr_number: p.number,
+  pr_url: p.url,
+  pr_state: p.state,
+  column: p.column,
+  column_label: COLUMN_LABEL[p.column],
+  human_review: p.humanReview,
+  bot_review: p.botReview,
+  ci_state: p.ciState,
+  is_draft: p.isDraft,
+})
+
+// A column move, shared by `mine column` and every sugar verb.
+const moveColumn = (db: Db, ctx: Ctx, target: PrColumn): number => {
+  const pr = resolveMyPr(db, selectorFrom(ctx.args))
+  if (ctx.dryRun) {
+    ctx.out(`would move ${pr.id}: ${COLUMN_LABEL[pr.column]} → ${COLUMN_LABEL[target]}`, {
+      ...prJson(pr),
+      would_move_to: target,
+      dry_run: true,
+    })
+    return EXIT.ok
+  }
+  const move = db.setColumn(pr.id, target, ctx.args.flags.force === true || ctx.args.flags.force === 'true')
+  const human = move.changed
+    ? `${pr.id}: ${COLUMN_LABEL[move.from]} → ${COLUMN_LABEL[move.to]}`
+    : `${pr.id}: already ${COLUMN_LABEL[move.to]} (no change)`
+  ctx.out(human, { ...prJson(pr), column: move.to, column_label: COLUMN_LABEL[move.to], moved: move.changed })
+  if (move.changed) notifyApp({ kind: 'cards.changed', ids: [pr.id], source: 'cli' })
+  return EXIT.ok
+}
+
+const mineCommand = (db: Db, ctx: Ctx): number => {
+  const [, sub, arg] = ctx.args.path
+
+  if (!sub || sub === 'list') {
+    const asked = flagString(ctx.args.flags, 'column')
+    const column = asked === undefined ? undefined : readColumn(asked)
+    const prs = db.myPrs({ column, repo: flagString(ctx.args.flags, 'repo') })
+    ctx.out(prs.map(prLine).join('\n') || '(no pull requests)', prs.map(prJson))
+    return EXIT.ok
+  }
+
+  if (sub === 'show') {
+    const pr = resolveMyPr(db, selectorFrom(ctx.args))
+    const human = [
+      `${pr.id}  ${pr.url}`,
+      `column     ${COLUMN_LABEL[pr.column]}`,
+      `branch     ${pr.branch}`,
+      `pr state   ${pr.state}${pr.isDraft ? ' (draft)' : ''}`,
+      `ci         ${pr.ciState ?? 'none'}`,
+      `review     ${pr.humanReview ?? 'none'}${pr.botReview ? ` (bot: ${pr.botReview})` : ''}`,
+    ].join('\n')
+    ctx.out(human, prJson(pr))
+    return EXIT.ok
+  }
+
+  if (sub === 'column') {
+    if (!arg) throw new Error(`column required: one of ${COLUMN_NAMES.join(', ')}`)
+    return moveColumn(db, ctx, readColumn(arg))
+  }
+
+  if (VERB_COLUMN[sub]) return moveColumn(db, ctx, VERB_COLUMN[sub])
+
+  throw new Error(`unknown mine command "${sub}"`)
 }
 
 const doctor = (ctx: Ctx): number => {
@@ -149,8 +268,21 @@ const doctor = (ctx: Ctx): number => {
   try {
     const db = openDb(path, true)
     const tasks = db.tasks()
+    // my_prs only exists from migration 013; an older database is still usable, just without it
+    const prs = (() => {
+      try {
+        return db.myPrs().length
+      } catch {
+        return null
+      }
+    })()
     db.close()
-    ctx.out(`database  ${path}\ncards     ${tasks.length}`, { db: path, cards: tasks.length, ok: true })
+    const human = [
+      `database  ${path}`,
+      `review    ${tasks.length} cards`,
+      `mine      ${prs === null ? 'not migrated — start this version of the app once' : `${prs} pull requests`}`,
+    ].join('\n')
+    ctx.out(human, { db: path, cards: tasks.length, my_prs: prs, ok: true })
     return EXIT.ok
   } catch (e) {
     if (e instanceof NoDatabaseError) {
@@ -188,11 +320,12 @@ export const run = (argv: string[], stdout = console.log, stderr = console.error
 
   try {
     if (command === 'doctor') return doctor(ctx)
-    if (command !== 'card') throw new Error(`unknown command "${command}"`)
+    const isReview = REVIEW_ALIASES.includes(command)
+    if (!isReview && command !== 'mine') throw new Error(`unknown command "${command}"`)
     const readOnly = ['list', 'show', undefined].includes(args.path[1]) || ctx.dryRun
     const db = openDb(resolveDbPath(), readOnly)
     try {
-      return cardCommand(db, ctx)
+      return isReview ? reviewCommand(db, ctx) : mineCommand(db, ctx)
     } finally {
       db.close()
     }

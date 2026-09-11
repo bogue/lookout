@@ -157,12 +157,17 @@ export type GhMyPr = {
   createdAt: string
   isDraft: boolean
   state: string // OPEN | CLOSED | MERGED
+  mergedAt?: string | null
+  closedAt?: string | null
   latestReviews: { author: { login: string; is_bot?: boolean } | null; state: string }[]
   reviewRequests: { login?: string }[] // reviewers with a pending (re-)review request
   statusCheckRollup: { conclusion?: string; status?: string; state?: string }[]
 }
 
-export const listMyPrs = async (repo: string, me: string): Promise<GhMyPr[]> =>
+const MY_PR_FIELDS =
+  'number,title,url,headRefName,createdAt,isDraft,state,mergedAt,closedAt,latestReviews,reviewRequests,statusCheckRollup'
+
+const listMyPrsIn = async (repo: string, me: string, state: string, limit: number): Promise<GhMyPr[]> =>
   JSON.parse(
     await gh([
       'pr',
@@ -172,10 +177,19 @@ export const listMyPrs = async (repo: string, me: string): Promise<GhMyPr[]> =>
       '--author',
       me,
       '--state',
-      'all',
+      state,
       '--limit',
-      '50',
+      String(limit),
       '--json',
-      'number,title,url,headRefName,createdAt,isDraft,state,latestReviews,reviewRequests,statusCheckRollup',
+      MY_PR_FIELDS,
     ]),
   )
+
+// Open and recently-closed PRs, asked for separately on purpose. A single `--state all --limit 50`
+// is newest-first, so in a busy repo merge history fills the window and pushes long-lived open PRs
+// out of it entirely — TinxHQ/wazo-mobile#1651 had been open since May and never reached the board.
+// Closed/merged ones only feed the Done column, which keeps just the current day, so 30 is plenty.
+export const listMyPrs = async (repo: string, me: string): Promise<GhMyPr[]> => {
+  const [open, closed] = await Promise.all([listMyPrsIn(repo, me, 'open', 100), listMyPrsIn(repo, me, 'closed', 30)])
+  return [...open, ...closed]
+}

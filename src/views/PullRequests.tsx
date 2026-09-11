@@ -86,8 +86,12 @@ const PrCard = ({
     }`}
   >
     {pr.column === 'done' ? (
-      // Done = merged: the review/CI detail no longer matters, just show the outcome
-      <span className="rounded bg-purple-500/20 px-1 py-0.5 text-purple-300">merged</span>
+      // Done = dealt with: the review/CI detail no longer matters, just show the outcome
+      pr.state === 'closed' ? (
+        <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">closed</span>
+      ) : (
+        <span className="rounded bg-purple-500/20 px-1 py-0.5 text-purple-300">merged</span>
+      )
     ) : (
       <>
         {run?.status === 'running' && (
@@ -100,7 +104,9 @@ const PrCard = ({
         <CiTag ci={pr.ciState} />
       </>
     )}
-    {pr.column === 'in_review' && (
+    {/* Gated on having a review to handle, not on the column: a bot review no longer moves the card
+        out of Waiting, and clearing Cursor's comments is exactly the sort of thing this button runs. */}
+    {pr.column !== 'done' && (pr.humanReview !== null || pr.botReview !== null) && (
       <button
         type="button"
         onClick={(e) => {
@@ -131,10 +137,10 @@ export const PullRequests = ({ prs, me, runs, alertedIds, onOpen, onHandleReview
   const byColumn = (c: PrColumn) =>
     prs
       .filter((p) => p.column === c && matchesFilter(filter, p.repo, p.ciState))
-      // Done ignores drag order: merged PRs just list newest first
+      // Done ignores drag order: it holds today's merges and closes, most recently dealt with first
       .sort((a, b) =>
         c === 'done'
-          ? b.createdAt.localeCompare(a.createdAt)
+          ? (b.doneAt ?? b.createdAt).localeCompare(a.doneAt ?? a.createdAt)
           : orderKey(a) - orderKey(b) || b.createdAt.localeCompare(a.createdAt),
       )
   const doneCount = prs.filter((p) => p.column === 'done' && matchesFilter(filter, p.repo, p.ciState)).length

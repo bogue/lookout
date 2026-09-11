@@ -16,8 +16,8 @@ import { fetchLogin, fetchName, fetchPrExchange, fetchPrState, listCommentedByMe
 import { notify } from './notify'
 import { scanReviewFiles } from './reviews'
 import { approvedByMe, deriveStage } from './reviewstage'
-import { BOARD_STAGES } from './stages'
 import { scanRepoSessions } from './sessions'
+import { BOARD_STAGES } from './stages'
 
 // Stages whose PRs we actively watch for new comments / CI: everything on the board bar Done.
 const ACTIVE_STAGES = new Set<string>(BOARD_STAGES.filter((s) => s !== 'done'))

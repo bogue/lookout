@@ -1,4 +1,4 @@
-import type { CiState, MyPr, PrColumn, PrOverride, PrState, ReviewFlavor } from '../types'
+import type { CiState, MyPr, PrColumn, PrState, ReviewFlavor } from '../types'
 import type { GhMyPr } from './gh'
 
 // Collapse a statusCheckRollup array into a single CI verdict (fail > pending > pass; empty = null).
@@ -38,40 +38,34 @@ export const reviewFlavor = (reviews: Review[]): ReviewFlavor => {
   return null
 }
 
-// Which board column a PR belongs in. Stateless: re-deriving from the latest reviews naturally moves a
-// card back to In Review when a fresh non-approval review lands, and keeps it in Ready while approved.
-export const classifyColumn = (pr: {
-  state: PrState
-  isDraft: boolean
-  humanReview: ReviewFlavor
-  botReview: ReviewFlavor
-}): PrColumn => {
-  if (pr.state === 'merged') return 'done'
+// GitHub's verdict on where a PR belongs. This is only ever an *input* — what the board shows comes
+// from resolveColumn (prcolumns.ts), which moves a card forward and only when this verdict changes.
+//
+// Bot reviews deliberately don't appear here. A Cursor/Sonar review is lint: the author's problem to
+// clear, not a step in the review process — the same reading alerts.ts has always taken
+// (`lastHumanReview` skips bots). They'd also be corrosive under a forward-only rule, since a bot
+// reviews within minutes of every push and would strand every PR in In Review forever. The card
+// still shows the 🤖 badge either way.
+export const classifyColumn = (pr: { state: PrState; isDraft: boolean; humanReview: ReviewFlavor }): PrColumn => {
+  if (pr.state !== 'open') return 'done' // merged or closed: dealt with
   if (pr.isDraft) return 'waiting'
   // a human approval (with no outstanding change request) means "ready — I decide whether to merge"
   if (pr.humanReview === 'approved') return 'ready'
-  // any submitted review (human non-approval, or a bot) puts it in review
-  if (pr.humanReview !== null || pr.botReview !== null) return 'in_review'
+  if (pr.humanReview !== null) return 'in_review'
   return 'waiting'
 }
 
-// Resolve a manual hand-off against the live GitHub-derived column. The override is self-healing:
-// it holds the manual placement only while GitHub hasn't moved off the baseline it was set against.
-// Once the derived column changes (e.g. a review lands, an approval → ready) or the PR merges, it's stale.
-export const resolveOverride = (
-  derived: PrColumn,
-  override: PrOverride | undefined,
-): { column: PrColumn; stale: boolean } => {
-  if (!override) return { column: derived, stale: false }
-  if (derived === 'done') return { column: 'done', stale: true } // merged: a hand-off can't outlive the merge
-  if (derived !== override.baseline) return { column: derived, stale: true } // reality moved past the hand-off
-  return { column: override.column, stale: false }
-}
+// Done holds only the current day's work, so a PR merged or closed before `since` isn't boarded at
+// all. Storing it and leaving it to the next pass's prune doesn't work: the listing returns it again
+// every sync, so it would be re-added as fast as it's deleted and Done would fill with months of
+// merges. `since` is the local start of day (startOfToday).
+export const isBoardable = (pr: { state: PrState; doneAt: string | null }, since: string): boolean =>
+  pr.state === 'open' || (pr.doneAt !== null && pr.doneAt >= since)
 
-// Map a raw gh PR into a classified MyPr. Returns null for closed-unmerged PRs (not boarded).
-export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr | null => {
+// Map a raw gh PR into the facts the board stores. `column` is only the starting placement for a PR
+// we've never seen; for a known one the caller re-resolves it against the stored row (resolveColumn).
+export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr => {
   const state = raw.state.toLowerCase() as PrState
-  if (state === 'closed') return null // closed without merging: don't board it
 
   // a reviewer with a pending (re-)review request has had their prior review superseded — ignore it,
   // so re-requesting review after handling comments clears the stale "commented"/"changes" tag
@@ -81,7 +75,7 @@ export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr
   const botReviews = active.filter((r) => isBot(r.author))
   const humanReview = reviewFlavor(humanReviews)
   const botReview = reviewFlavor(botReviews)
-  const column = classifyColumn({ state, isDraft: raw.isDraft, humanReview, botReview })
+  const column = classifyColumn({ state, isDraft: raw.isDraft, humanReview })
 
   return {
     id: `${repo}#${raw.number}`,
@@ -100,5 +94,6 @@ export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr
     humanReview,
     botReview,
     ciState: rollupToCiState(raw.statusCheckRollup ?? []),
+    doneAt: raw.mergedAt ?? raw.closedAt ?? null,
   }
 }
