@@ -38,14 +38,14 @@ describe('repoFromRemote', () => {
 })
 
 describe('resolveCard', () => {
-  it('takes --card verbatim', () => {
+  it('takes --id verbatim', () => {
     const { db } = fakeDb([task('owner/repo#1', 'alpha', 1)])
-    expect(resolveCard(db, { card: 'owner/repo#1' }, git(null, null)).id).toBe('owner/repo#1')
+    expect(resolveCard(db, { id: 'owner/repo#1' }, git(null, null)).id).toBe('owner/repo#1')
   })
 
-  it('errors on an unknown --card', () => {
+  it('errors on an unknown --id', () => {
     const { db } = fakeDb([])
-    expect(() => resolveCard(db, { card: 'owner/repo#9' }, git(null, null))).toThrow(NoMatchError)
+    expect(() => resolveCard(db, { id: 'owner/repo#9' }, git(null, null))).toThrow(NoMatchError)
   })
 
   it('infers repo and branch from the working copy', () => {

@@ -86,22 +86,32 @@ It runs on Node 22.13+ (or 23.4+), where `node:sqlite` stopped needing a flag. I
 report back once it has pushed comments — and it works whether or not the app is open, because it
 writes the same SQLite database the app uses.
 
+The command name says whose work it is: **`review`** for other people's PRs (the review pipeline),
+**`mine`** for your own (the merge pipeline).
+
 ```bash
-lookout card list --stage "in review"      # what's in a column
-lookout card show --pr 2305               # one card, or omit the selector inside a repo checkout
-lookout card reviewed                     # the PR for this repo + branch → Reviewed
-lookout card comments-pushed --count 3    # what /do-review calls after `gh api .../reviews`
-lookout doctor                            # database path and card count
+lookout review list --stage "in review"    # what's in a column
+lookout review show --pr 2305              # one card, or omit the selector inside a repo checkout
+lookout review reviewed                    # the PR for this repo + branch → Reviewed
+lookout review comments-pushed --count 3   # what /do-review calls after `gh api .../reviews`
+
+lookout mine list --column ready           # my PRs that are approved and just need a CI check
+lookout mine show                          # my PR for this repo + branch
+lookout mine ready                         # → Ready to merge
+
+lookout doctor                             # database path and both board counts
 ```
 
-Stages are named the way the board names them — `needs-review`, `"In Review"`, `follow-up`, case and
-spacing ignored. Retired ids still resolve (`inbox` is now `needs_review`), so older scripts keep
-working.
+Stages and columns are named the way the board names them — `needs-review`, `"In Review"`,
+`follow-up`, `"Ready to merge"`, case and spacing ignored. Retired names still resolve (`inbox` is
+now `needs_review`, and `lookout card …` is the old spelling of `lookout review …`), so older
+scripts and shell aliases keep working.
 
-A card is picked by `--card <id>`, `--pr <n>` or `--branch <b>` (add `--repo owner/repo` to
-disambiguate); with no selector at all it uses the current checkout's origin and branch. Stage moves
-are forward-only — the app's own rule, so an automated caller can't drag a card backwards — with
-`--force` to override. `--json` for machine output, `--dry-run` to resolve without writing.
+A card is picked by `--id <id>`, `--pr <n>` or `--branch <b>` (add `--repo owner/repo` to
+disambiguate); with no selector at all it uses the current checkout's origin and branch. Moves on
+both boards are forward-only — the app's own rule, so an automated caller can't drag a card
+backwards — with `--force` to override. `--json` for machine output, `--dry-run` to resolve without
+writing.
 
 Exit codes are the contract for scripts: `0` done · `1` error · `2` no matching card · `3` Lookout
 has never run here · `4` selector matched several cards. In a skill, guard on the binary and let the

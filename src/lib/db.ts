@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Alert, AlertKind, CiState, MyPr, PrColumn, ReviewFlavor, ReviewTask, Stage } from '../types'
+import type { Alert, AlertKind, MyPr, PrColumn, ReviewTask, Stage } from '../types'
 import { type AlertScope, inScope } from './alerts'
+import { type MyPrRow, rowToMyPr } from './myprrow'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
 let db: Database | null = null
@@ -226,50 +227,9 @@ export const setLinks = async (id: string, sessionIds: string[], reviewFiles: st
 // Stored rather than derived, so the board paints at launch instead of after the first sync, and so
 // a repo whose `gh` call failed keeps its cards instead of silently emptying its columns.
 
-type MyPrRow = {
-  id: string
-  repo: string
-  repo_path: string | null
-  number: number
-  title: string
-  url: string
-  branch: string
-  pr_created_at: string
-  state: string
-  is_draft: number
-  human_review: string | null
-  bot_review: string | null
-  ci_state: string | null
-  derived_column: string
-  board_column: string
-  sort_order: number | null
-  done_at: string | null
-  updated_at: string
-}
-
-const toMyPrRow = (r: MyPrRow): MyPr => ({
-  id: r.id,
-  repo: r.repo,
-  repoPath: r.repo_path,
-  number: r.number,
-  title: r.title,
-  url: r.url,
-  branch: r.branch,
-  createdAt: r.pr_created_at,
-  state: r.state as MyPr['state'],
-  isDraft: r.is_draft === 1,
-  humanReview: r.human_review as ReviewFlavor,
-  botReview: r.bot_review as ReviewFlavor,
-  ciState: r.ci_state as CiState,
-  derivedColumn: r.derived_column as PrColumn,
-  column: r.board_column as PrColumn,
-  sortOrder: r.sort_order,
-  doneAt: r.done_at,
-})
-
 export const allMyPrs = async (): Promise<MyPr[]> => {
   const d = await getDb()
-  return (await d.select<MyPrRow[]>('SELECT * FROM my_prs')).map(toMyPrRow)
+  return (await d.select<MyPrRow[]>('SELECT * FROM my_prs')).map(rowToMyPr)
 }
 
 // Write the GitHub facts and the resolved placement. `board_column` is decided by the caller
