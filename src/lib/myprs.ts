@@ -6,7 +6,7 @@ import { fetchLogin, fetchPrExchange, listMyPrs } from './gh'
 import { notify } from './notify'
 import { toMyPr } from './prboard'
 import { resolveColumn } from './prcolumns'
-import { migrateLegacyPrStore } from './proverrides'
+import { type LegacyPrStore, migrateLegacyPrStore } from './proverrides'
 import { startOfToday } from './time'
 
 // One pass: list the PRs I authored across watched repos and reconcile them into `my_prs`.
@@ -26,8 +26,9 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
   await pruneDoneMyPrs(startOfToday()) // Done keeps only what was merged or closed today
 
   const stored = new Map((await allMyPrs()).map((p) => [p.id, p]))
-  // drag positions from the retired pr-overrides.json, carried over once (empty on every later pass)
-  const legacyOrders = await migrateLegacyPrStore().catch(() => ({}) as Record<string, number>)
+  // placements and drag positions from the retired pr-overrides.json, carried over once so nobody
+  // has to re-drag their board (empty on every later pass — the store is cleared as it's read)
+  const legacy: LegacyPrStore = await migrateLegacyPrStore().catch(() => ({ columns: {}, orders: {} }))
   const listed: string[] = [] // repos that answered; a failed one keeps its alerts untouched
   for (const { repo, path } of cfg.repos) {
     let raw: Awaited<ReturnType<typeof listMyPrs>>
@@ -47,8 +48,11 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
         // GitHub only gets to move the card when its own verdict changed (see prcolumns.ts)
         fresh.column = resolveColumn(prev.column, prev.derivedColumn, fresh.derivedColumn)
         fresh.sortOrder = prev.sortOrder
+      } else {
+        // never seen before: an old hand-off, if there was one, is where the card starts
+        fresh.column = legacy.columns[fresh.id] ?? fresh.column
       }
-      fresh.sortOrder ??= legacyOrders[fresh.id] ?? null
+      fresh.sortOrder ??= legacy.orders[fresh.id] ?? null
       await upsertMyPr(fresh)
     }
     await dropMyPrsMissingFrom(repo, seen)

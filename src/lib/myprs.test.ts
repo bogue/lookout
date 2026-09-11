@@ -17,11 +17,12 @@ vi.mock('./gh', () => ({
   listMyPrs: vi.fn(),
 }))
 vi.mock('./notify', () => ({ notify: vi.fn() }))
-vi.mock('./proverrides', () => ({ migrateLegacyPrStore: vi.fn(async () => ({})) }))
+vi.mock('./proverrides', () => ({ migrateLegacyPrStore: vi.fn(async () => ({ columns: {}, orders: {} })) }))
 
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, upsertMyPr } from './db'
 import { listMyPrs } from './gh'
 import { syncMyPrs } from './myprs'
+import { migrateLegacyPrStore } from './proverrides'
 
 const REPO = 'owner/repo'
 const OTHER = 'owner/other'
@@ -82,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(allMyPrs).mockResolvedValue([])
   vi.mocked(listMyPrs).mockResolvedValue([])
+  vi.mocked(migrateLegacyPrStore).mockResolvedValue({ columns: {}, orders: {} })
 })
 
 describe('syncMyPrs — a repo that fails keeps its cards', () => {
@@ -183,5 +185,29 @@ describe('syncMyPrs — Done is scoped to today', () => {
     const row = written(`${REPO}#1`)
     expect(row?.column).toBe('done')
     expect(row?.doneAt).toBe('2026-09-11T09:00:00Z')
+  })
+})
+
+describe('syncMyPrs — the retired pr-overrides.json is carried over once', () => {
+  it('starts an unseen card at its old hand-off column', async () => {
+    vi.mocked(migrateLegacyPrStore).mockResolvedValue({ columns: { [`${REPO}#1`]: 'ready' }, orders: {} })
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()]) // no reviews: GitHub would say waiting
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.column).toBe('ready')
+  })
+
+  it('does not let it overrule a card already stored', async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ column: 'in_review', derivedColumn: 'waiting' })])
+    vi.mocked(migrateLegacyPrStore).mockResolvedValue({ columns: { [`${REPO}#1`]: 'ready' }, orders: {} })
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.column).toBe('in_review')
+  })
+
+  it('carries the old drag position', async () => {
+    vi.mocked(migrateLegacyPrStore).mockResolvedValue({ columns: {}, orders: { [`${REPO}#1`]: 20 } })
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.sortOrder).toBe(20)
   })
 })
