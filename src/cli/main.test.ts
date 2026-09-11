@@ -88,7 +88,7 @@ describe('help and unknown commands', () => {
   })
 })
 
-describe('card list / show', () => {
+describe('review list / show', () => {
   it('lists cards with UI stage labels, not ids', () => {
     expect(cli('card', 'list')).toBe(EXIT.ok)
     expect(out.join('')).toContain('In Review')

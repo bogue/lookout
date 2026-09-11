@@ -118,7 +118,7 @@ has never run here · `4` selector matched several cards. In a skill, guard on t
 "nothing to do" codes pass:
 
 ```bash
-command -v lookout >/dev/null && lookout card comments-pushed --branch "$BRANCH" --count 3 --quiet || true
+command -v lookout >/dev/null && lookout review comments-pushed --branch "$BRANCH" --count 3 --quiet || true
 ```
 
 When the app is running it repaints immediately: the CLI pings a unix socket the app publishes next
