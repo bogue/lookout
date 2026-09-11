@@ -6,3 +6,8 @@ export const timeAgo = (iso: string | null): string => {
   if (s < 30 * 86400) return `${Math.floor(s / 86400)}d ago`
   return new Date(iso).toLocaleDateString()
 }
+
+// Local midnight, as an ISO instant. What "today" means for the Done column: a PR merged at 23:50
+// is still today's until the clock rolls over, wherever the laptop happens to be.
+export const startOfToday = (now = new Date()): string =>
+  new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()

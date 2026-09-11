@@ -14,8 +14,7 @@ describe('advanceColumn — forward-only along waiting < in_review < ready < don
     expect(advanceColumn('done', 'waiting')).toBe('done')
   })
 
-  it('is a no-op when the target is where we already are', () =>
-    expect(advanceColumn('ready', 'ready')).toBe('ready'))
+  it('is a no-op when the target is where we already are', () => expect(advanceColumn('ready', 'ready')).toBe('ready'))
 })
 
 describe('resolveColumn — GitHub only gets a say when its verdict changed', () => {

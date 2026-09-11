@@ -169,8 +169,20 @@ const MY_PR_FIELDS =
 
 const listMyPrsIn = async (repo: string, me: string, state: string, limit: number): Promise<GhMyPr[]> =>
   JSON.parse(
-    await gh(['pr', 'list', '--repo', repo, '--author', me, '--state', state, '--limit', String(limit), '--json',
-      MY_PR_FIELDS]),
+    await gh([
+      'pr',
+      'list',
+      '--repo',
+      repo,
+      '--author',
+      me,
+      '--state',
+      state,
+      '--limit',
+      String(limit),
+      '--json',
+      MY_PR_FIELDS,
+    ]),
   )
 
 // Open and recently-closed PRs, asked for separately on purpose. A single `--state all --limit 50`
@@ -178,9 +190,6 @@ const listMyPrsIn = async (repo: string, me: string, state: string, limit: numbe
 // out of it entirely — TinxHQ/wazo-mobile#1651 had been open since May and never reached the board.
 // Closed/merged ones only feed the Done column, which keeps just the current day, so 30 is plenty.
 export const listMyPrs = async (repo: string, me: string): Promise<GhMyPr[]> => {
-  const [open, closed] = await Promise.all([
-    listMyPrsIn(repo, me, 'open', 100),
-    listMyPrsIn(repo, me, 'closed', 30),
-  ])
+  const [open, closed] = await Promise.all([listMyPrsIn(repo, me, 'open', 100), listMyPrsIn(repo, me, 'closed', 30)])
   return [...open, ...closed]
 }

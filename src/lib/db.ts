@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Alert, AlertKind, ReviewTask, Stage } from '../types'
+import type { Alert, AlertKind, CiState, MyPr, PrColumn, ReviewFlavor, ReviewTask, Stage } from '../types'
 import { type AlertScope, inScope } from './alerts'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
@@ -220,4 +220,136 @@ export const setLinks = async (id: string, sessionIds: string[], reviewFiles: st
     JSON.stringify(reviewFiles),
     id,
   ])
+}
+
+// ---- my_prs: the Pull Requests board -------------------------------------------------------
+// Stored rather than derived, so the board paints at launch instead of after the first sync, and so
+// a repo whose `gh` call failed keeps its cards instead of silently emptying its columns.
+
+type MyPrRow = {
+  id: string
+  repo: string
+  repo_path: string | null
+  number: number
+  title: string
+  url: string
+  branch: string
+  pr_created_at: string
+  state: string
+  is_draft: number
+  human_review: string | null
+  bot_review: string | null
+  ci_state: string | null
+  derived_column: string
+  board_column: string
+  sort_order: number | null
+  done_at: string | null
+  updated_at: string
+}
+
+const toMyPrRow = (r: MyPrRow): MyPr => ({
+  id: r.id,
+  repo: r.repo,
+  repoPath: r.repo_path,
+  number: r.number,
+  title: r.title,
+  url: r.url,
+  branch: r.branch,
+  createdAt: r.pr_created_at,
+  state: r.state as MyPr['state'],
+  isDraft: r.is_draft === 1,
+  humanReview: r.human_review as ReviewFlavor,
+  botReview: r.bot_review as ReviewFlavor,
+  ciState: r.ci_state as CiState,
+  derivedColumn: r.derived_column as PrColumn,
+  column: r.board_column as PrColumn,
+  sortOrder: r.sort_order,
+  doneAt: r.done_at,
+})
+
+export const allMyPrs = async (): Promise<MyPr[]> => {
+  const d = await getDb()
+  return (await d.select<MyPrRow[]>('SELECT * FROM my_prs')).map(toMyPrRow)
+}
+
+// Write the GitHub facts and the resolved placement. `board_column` is decided by the caller
+// (resolveColumn) — this only persists it.
+export const upsertMyPr = async (pr: MyPr) => {
+  const d = await getDb()
+  await d.execute(
+    `INSERT INTO my_prs (id, repo, repo_path, number, title, url, branch, pr_created_at, state, is_draft,
+       human_review, bot_review, ci_state, derived_column, board_column, sort_order, done_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+     ON CONFLICT(id) DO UPDATE SET
+       repo_path = $3, title = $5, url = $6, branch = $7, state = $9, is_draft = $10,
+       human_review = $11, bot_review = $12, ci_state = $13, derived_column = $14, board_column = $15,
+       done_at = $17, updated_at = $18`,
+    [
+      pr.id,
+      pr.repo,
+      pr.repoPath,
+      pr.number,
+      pr.title,
+      pr.url,
+      pr.branch,
+      pr.createdAt,
+      pr.state,
+      pr.isDraft ? 1 : 0,
+      pr.humanReview,
+      pr.botReview,
+      pr.ciState,
+      pr.derivedColumn,
+      pr.column,
+      pr.sortOrder,
+      pr.doneAt,
+      new Date().toISOString(),
+    ],
+  )
+}
+
+// A manual drop. `derived_column` is deliberately left untouched: the next sync compares GitHub's
+// verdict against it, sees no change, and leaves this placement alone (src/lib/prcolumns.ts).
+export const setMyPrColumn = async (id: string, column: PrColumn) => {
+  const d = await getDb()
+  await d.execute('UPDATE my_prs SET board_column = $1, updated_at = $2 WHERE id = $3', [
+    column,
+    new Date().toISOString(),
+    id,
+  ])
+}
+
+export const setMyPrOrders = async (orderedIds: string[]) => {
+  const d = await getDb()
+  for (const [i, id] of orderedIds.entries()) {
+    await d.execute('UPDATE my_prs SET sort_order = $1 WHERE id = $2', [(i + 1) * 10, id])
+  }
+}
+
+// Drop rows for repos that are no longer watched. Mirrors pruneRepos for the tasks table.
+export const pruneMyPrRepos = async (repos: string[]) => {
+  const d = await getDb()
+  if (repos.length === 0) {
+    await d.execute('DELETE FROM my_prs')
+    return
+  }
+  const placeholders = repos.map((_, i) => `$${i + 1}`).join(', ')
+  await d.execute(`DELETE FROM my_prs WHERE repo NOT IN (${placeholders})`, repos)
+}
+
+// Done holds only what was merged or closed today: the column answers "what did I ship today", and
+// it empties itself overnight. `since` is the local start of day, as an ISO instant.
+export const pruneDoneMyPrs = async (since: string) => {
+  const d = await getDb()
+  await d.execute("DELETE FROM my_prs WHERE state != 'open' AND (done_at IS NULL OR done_at < $1)", [since])
+}
+
+// PRs that dropped out of a repo's listing entirely (older than the closed window we ask for).
+export const dropMyPrsMissingFrom = async (repo: string, keepIds: string[]) => {
+  const d = await getDb()
+  if (keepIds.length === 0) {
+    await d.execute('DELETE FROM my_prs WHERE repo = $1', [repo])
+    return
+  }
+  const placeholders = keepIds.map((_, i) => `$${i + 2}`).join(', ')
+  await d.execute(`DELETE FROM my_prs WHERE repo = $1 AND id NOT IN (${placeholders})`, [repo, ...keepIds])
 }

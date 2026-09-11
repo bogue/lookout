@@ -46,11 +46,7 @@ export const reviewFlavor = (reviews: Review[]): ReviewFlavor => {
 // (`lastHumanReview` skips bots). They'd also be corrosive under a forward-only rule, since a bot
 // reviews within minutes of every push and would strand every PR in In Review forever. The card
 // still shows the 🤖 badge either way.
-export const classifyColumn = (pr: {
-  state: PrState
-  isDraft: boolean
-  humanReview: ReviewFlavor
-}): PrColumn => {
+export const classifyColumn = (pr: { state: PrState; isDraft: boolean; humanReview: ReviewFlavor }): PrColumn => {
   if (pr.state !== 'open') return 'done' // merged or closed: dealt with
   if (pr.isDraft) return 'waiting'
   // a human approval (with no outstanding change request) means "ready — I decide whether to merge"

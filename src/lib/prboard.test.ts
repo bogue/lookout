@@ -154,8 +154,7 @@ describe('toMyPr', () => {
     expect(pr.doneAt).toBe('2026-09-11T09:00:00Z')
   })
 
-  it('leaves doneAt null while the PR is open', () =>
-    expect(toMyPr(raw({}), REPO, '/clone').doneAt).toBe(null))
+  it('leaves doneAt null while the PR is open', () => expect(toMyPr(raw({}), REPO, '/clone').doneAt).toBe(null))
 
   it('separates human and bot review tags', () => {
     const pr = toMyPr(raw({ latestReviews: [human('APPROVED'), bot('CHANGES_REQUESTED')] }), REPO, '/clone')
