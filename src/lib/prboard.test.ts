@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GhMyPr } from './gh'
-import { isBot, resolveOverride, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
+import { isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
 
 const REPO = 'owner/repo'
 
@@ -22,7 +22,7 @@ const raw = (o: Partial<GhMyPr> = {}): GhMyPr => ({
 const human = (state: string, login = 'alice') => ({ author: { login }, state })
 const bot = (state: string, login = 'cursor[bot]') => ({ author: { login, is_bot: true }, state })
 
-const col = (o: Partial<GhMyPr>) => toMyPr(raw(o), REPO, '/clone')?.column
+const col = (o: Partial<GhMyPr>) => toMyPr(raw(o), REPO, '/clone').column
 
 describe('isBot', () => {
   it('detects the [bot] login suffix', () => {
@@ -65,6 +65,10 @@ describe('classifyColumn — column per PR state', () => {
     expect(col({ isDraft: true, latestReviews: [human('COMMENTED')] })).toBe('waiting')
   })
 
+  it('Done: closed without merging is dealt with too', () => {
+    expect(col({ state: 'CLOSED' })).toBe('done')
+  })
+
   it('In Review: a human requested changes', () => {
     expect(col({ latestReviews: [human('CHANGES_REQUESTED')] })).toBe('in_review')
   })
@@ -73,8 +77,9 @@ describe('classifyColumn — column per PR state', () => {
     expect(col({ latestReviews: [human('COMMENTED')] })).toBe('in_review')
   })
 
-  it('In Review: bot-only review (any review moves it in)', () => {
-    expect(col({ latestReviews: [bot('CHANGES_REQUESTED')] })).toBe('in_review')
+  it('Waiting: a bot-only review does not move the card (bot review is lint, not the process)', () => {
+    expect(col({ latestReviews: [bot('CHANGES_REQUESTED')] })).toBe('waiting')
+    expect(col({ latestReviews: [bot('APPROVED')] })).toBe('waiting')
   })
 
   it('Ready: a human approved', () => {
@@ -103,6 +108,8 @@ describe('classifyColumn — column per PR state', () => {
   })
 })
 
+// classifyColumn is only GitHub's opinion — resolveColumn (prcolumns.test.ts) is what keeps a card
+// that already reached In Review from falling back here.
 describe('re-requested review supersedes a prior review', () => {
   it('a commented reviewer who is re-requested no longer shows a tag → back to Waiting', () => {
     const pr = toMyPr(
@@ -110,14 +117,14 @@ describe('re-requested review supersedes a prior review', () => {
       REPO,
       '/clone',
     )
-    expect(pr?.humanReview).toBe(null)
-    expect(pr?.column).toBe('waiting')
+    expect(pr.humanReview).toBe(null)
+    expect(pr.column).toBe('waiting')
   })
 
   it('without a pending request the commented tag stays and it sits In Review', () => {
     const pr = toMyPr(raw({ latestReviews: [human('COMMENTED', 'Mig-OG')] }), REPO, '/clone')
-    expect(pr?.humanReview).toBe('commented')
-    expect(pr?.column).toBe('in_review')
+    expect(pr.humanReview).toBe('commented')
+    expect(pr.column).toBe('in_review')
   })
 
   it('a re-requested reviewer who already approved earlier is treated as pending (not ready)', () => {
@@ -126,54 +133,39 @@ describe('re-requested review supersedes a prior review', () => {
       REPO,
       '/clone',
     )
-    expect(pr?.humanReview).toBe(null)
-    expect(pr?.column).toBe('waiting')
-  })
-})
-
-describe('resolveOverride — self-healing manual placement', () => {
-  it('no override: keeps the derived column', () => {
-    expect(resolveOverride('waiting', undefined)).toEqual({ column: 'waiting', stale: false })
-  })
-
-  it('hand-off holds while GitHub is still at the baseline', () => {
-    // dragged waiting→in_review before any review; still no review → stays in_review
-    expect(resolveOverride('waiting', { column: 'in_review', baseline: 'waiting' })).toEqual({
-      column: 'in_review',
-      stale: false,
-    })
-  })
-
-  it('self-heals when the derived column moves off the baseline (approval → ready)', () => {
-    // the #2187 case: pinned in_review off a waiting baseline, then Mig approved → derived ready
-    expect(resolveOverride('ready', { column: 'in_review', baseline: 'waiting' })).toEqual({
-      column: 'ready',
-      stale: true,
-    })
-  })
-
-  it('merged drops the hand-off and forces Done', () => {
-    expect(resolveOverride('done', { column: 'in_review', baseline: 'waiting' })).toEqual({
-      column: 'done',
-      stale: true,
-    })
+    expect(pr.humanReview).toBe(null)
+    expect(pr.column).toBe('waiting')
   })
 })
 
 describe('toMyPr', () => {
-  it('excludes closed-unmerged PRs', () => {
-    expect(toMyPr(raw({ state: 'CLOSED' }), REPO, '/clone')).toBe(null)
+  it('boards closed-unmerged PRs into Done, stamped for the midnight prune', () => {
+    const pr = toMyPr(raw({ state: 'CLOSED', closedAt: '2026-09-11T10:00:00Z' }), REPO, '/clone')
+    expect(pr.column).toBe('done')
+    expect(pr.doneAt).toBe('2026-09-11T10:00:00Z')
   })
+
+  it('prefers mergedAt over closedAt (a merge stamps both)', () => {
+    const pr = toMyPr(
+      raw({ state: 'MERGED', mergedAt: '2026-09-11T09:00:00Z', closedAt: '2026-09-11T09:00:01Z' }),
+      REPO,
+      '/clone',
+    )
+    expect(pr.doneAt).toBe('2026-09-11T09:00:00Z')
+  })
+
+  it('leaves doneAt null while the PR is open', () =>
+    expect(toMyPr(raw({}), REPO, '/clone').doneAt).toBe(null))
 
   it('separates human and bot review tags', () => {
     const pr = toMyPr(raw({ latestReviews: [human('APPROVED'), bot('CHANGES_REQUESTED')] }), REPO, '/clone')
-    expect(pr?.humanReview).toBe('approved')
-    expect(pr?.botReview).toBe('changes_requested')
+    expect(pr.humanReview).toBe('approved')
+    expect(pr.botReview).toBe('changes_requested')
   })
 
   it('surfaces the CI tag and stable id', () => {
     const pr = toMyPr(raw({ number: 42, statusCheckRollup: [{ conclusion: 'FAILURE' }] }), REPO, '/clone')
-    expect(pr?.ciState).toBe('fail')
-    expect(pr?.id).toBe('owner/repo#42')
+    expect(pr.ciState).toBe('fail')
+    expect(pr.id).toBe('owner/repo#42')
   })
 })
