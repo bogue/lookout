@@ -1,5 +1,5 @@
 import { homeDir, join } from '@tauri-apps/api/path'
-import { exists, readDir, readTextFileLines } from '@tauri-apps/plugin-fs'
+import { exists, open, readDir } from '@tauri-apps/plugin-fs'
 import { listWorktrees } from './worktrees'
 
 export type ReviewSession = {
@@ -22,6 +22,40 @@ const TS_RE = /"timestamp":"([^"]+)"/
 // Cache: session files are append-only; once a file's first turn is parsed the result never changes.
 const cache = new Map<string, ReviewSession | null>()
 
+const HEAD_LINES = 20 // the opening command lives in the first turn; the rest of a transcript is noise
+const CHUNK = 64 * 1024
+const HEAD_BYTES = 1024 * 1024 // stop even if a session's first lines are enormous
+
+// Only the head of a session file is ever wanted, but `readTextFileLines` releases its Rust-side
+// file handle only when its iterator reaches EOF — abandoning it early (the whole point here) left
+// the descriptor open for the life of the webview. A few hundred sessions on disk then exhausted
+// the 256-descriptor soft limit macOS gives a launchd-started app, and from that point every `gh`
+// subprocess failed to spawn with "Too many open files", which reads on a card as a PR with no
+// activity. Read through a handle this closes itself instead.
+const readHeadLines = async (filePath: string): Promise<string[]> => {
+  const file = await open(filePath, { read: true })
+  try {
+    const decoder = new TextDecoder()
+    const buf = new Uint8Array(CHUNK)
+    let text = ''
+    let eof = false
+    while (text.length < HEAD_BYTES) {
+      const n = await file.read(buf)
+      if (n === null) {
+        eof = true
+        break
+      }
+      text += decoder.decode(buf.subarray(0, n), { stream: true })
+      if (text.split('\n').length - 1 >= HEAD_LINES) break
+    }
+    const lines = text.split('\n')
+    if (!eof) lines.pop() // cut short by the read cap, so the last piece isn't a whole line
+    return lines.slice(0, HEAD_LINES)
+  } finally {
+    await file.close()
+  }
+}
+
 // `worktreeBranch` is set for a worktree checkout: a worktree is dedicated to one branch, so every
 // session in it belongs to that branch whatever command opened it. The clone hosts sessions for many
 // branches over time, so there the branch can only come from the command's own argument.
@@ -35,9 +69,7 @@ const scanFile = async (
   let result: ReviewSession | null = null
   let command: string | null = null
   let ts: string | null = null
-  const lines = await readTextFileLines(filePath)
-  let count = 0
-  for await (const line of lines) {
+  for (const line of await readHeadLines(filePath)) {
     ts ??= line.match(TS_RE)?.[1] ?? null
     const review = line.match(REVIEW_COMMAND_RE)
     if (review) {
@@ -51,7 +83,6 @@ const scanFile = async (
       command = any[1]
       break
     }
-    if (++count >= 20) break
   }
   if (!result && worktreeBranch) result = { sessionId, command, branch: worktreeBranch, ts, cwd }
   cache.set(filePath, result)

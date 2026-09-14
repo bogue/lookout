@@ -11,7 +11,8 @@
     "sql:allow-execute",
     "sql:allow-select",
     "fs:allow-read-text-file",
-    "fs:allow-read-text-file-lines",
+    "fs:allow-open",
+    "fs:allow-read",
     "fs:allow-read-dir",
     "fs:allow-exists",
     {

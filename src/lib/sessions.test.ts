@@ -7,13 +7,35 @@ vi.mock('@tauri-apps/api/path', () => ({
 
 const files = new Map<string, string[]>() // session file path -> jsonl lines
 
+// Mirrors the real plugin-fs handle: bytes are served through read()/close(), and `openHandles`
+// counts the ones still unclosed so a leaked descriptor fails the suite.
+const openHandles = new Set<string>()
+
 vi.mock('@tauri-apps/plugin-fs', () => ({
   exists: async (p: string) => files.has(p) || [...files.keys()].some((f) => f.startsWith(`${p}/`)),
   readDir: async (dir: string) =>
     [...files.keys()]
       .filter((f) => f.startsWith(`${dir}/`))
       .map((f) => ({ name: f.slice(dir.length + 1), isFile: true, isDirectory: false })),
-  readTextFileLines: async (p: string) => files.get(p) ?? [],
+  open: async (p: string) => {
+    const lines = files.get(p)
+    if (!lines) throw new Error(`ENOENT ${p}`)
+    openHandles.add(p)
+    const bytes = new TextEncoder().encode(lines.map((l) => `${l}\n`).join(''))
+    let offset = 0
+    return {
+      read: async (buf: Uint8Array) => {
+        if (offset >= bytes.length) return null
+        const chunk = bytes.subarray(offset, offset + buf.byteLength)
+        buf.set(chunk)
+        offset += chunk.byteLength
+        return chunk.byteLength
+      },
+      close: async () => {
+        openHandles.delete(p)
+      },
+    }
+  },
 }))
 
 const worktrees = vi.hoisted(() => ({ listWorktrees: vi.fn() }))
@@ -32,6 +54,7 @@ const load = async () => {
 
 beforeEach(() => {
   files.clear()
+  openHandles.clear()
   worktrees.listWorktrees.mockReset()
   worktrees.listWorktrees.mockResolvedValue([
     { path: REPO, branch: 'main-work' },
@@ -117,5 +140,32 @@ describe('sessionCwd', () => {
   it('falls back to the clone for an unknown session', async () => {
     const { sessionCwd } = await load()
     expect(await sessionCwd(REPO, 'gone')).toBe(REPO)
+  })
+})
+
+describe('file descriptors', () => {
+  it('closes every session file it opens, including the ones it stops reading early', async () => {
+    // readTextFileLines only released its Rust-side handle at EOF, so breaking out of the scan at
+    // the first command marker leaked one descriptor per session file. A few hundred sessions on
+    // disk then exhausted the 256-descriptor soft limit macOS gives a launchd-started app and
+    // every `gh` subprocess failed to spawn with "Too many open files (os error 24)".
+    files.set(`${dirFor(REPO)}/early-exit.jsonl`, [
+      line('<command-name>/do-review</command-name><command-args>main-work</command-args>', '2026-09-01T10:00:00Z'),
+      ...Array.from({ length: 50 }, (_, i) => line('filler', `2026-09-01T10:00:${String(i).padStart(2, '0')}Z`)),
+    ])
+    const { scanRepoSessions } = await load()
+    await scanRepoSessions(REPO)
+    expect([...openHandles]).toEqual([])
+  })
+
+  it('still caps the scan at the head of a long session file', async () => {
+    files.clear()
+    files.set(`${dirFor(REPO)}/long.jsonl`, [
+      ...Array.from({ length: 40 }, () => line('no command here', '2026-09-01T10:00:00Z')),
+      line('<command-name>/do-review</command-name><command-args>late-branch</command-args>', '2026-09-01T11:00:00Z'),
+    ])
+    const { scanRepoSessions } = await load()
+    expect((await scanRepoSessions(REPO)).has('late-branch')).toBe(false)
+    expect([...openHandles]).toEqual([])
   })
 })
