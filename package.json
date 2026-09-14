@@ -14,6 +14,7 @@
     "test": "vitest run",
     "tauri": "tauri",
     "icon": "node scripts/generate-icon.mjs && tauri icon assets/logo.png && rm -rf src-tauri/icons/android src-tauri/icons/ios",
+    "banner": "node scripts/generate-banner.mjs",
     "release": "pnpm version",
     "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock Casks/lookout.rb",
     "postversion": "git push --follow-tags"
