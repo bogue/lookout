@@ -43,10 +43,16 @@ pnpm install
 pnpm tauri dev
 ```
 
-Requirements: Rust toolchain, `gh` (authenticated), `claude` CLI. pnpm is pinned by the
-`packageManager` field — `corepack enable` picks up the right version. `npm install` can't build
-this tree: `package-lock.json` is stale, and resolving the missing dev deps from scratch crashes
-Arborist with `Cannot read properties of null (reading 'edgesOut')`.
+Requirements:
+
+- **Rust** (stable) — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`. Without it
+  `pnpm tauri dev` dies at `cargo metadata … No such file or directory (os error 2)`.
+- **Xcode Command Line Tools** — `xcode-select --install`, for the linker `cargo` shells out to.
+- **`gh`** (authenticated) and the **`claude`** CLI.
+
+pnpm is pinned by the `packageManager` field — `corepack enable` picks up the right version.
+`npm install` can't build this tree: `package-lock.json` is stale, and resolving the missing dev
+deps from scratch crashes Arborist with `Cannot read properties of null (reading 'edgesOut')`.
 
 ## Usage
 
