@@ -45,21 +45,28 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
   const polledRepos = new Set<string>()
   for (const { repo, path } of config.repos) {
     let prs: Awaited<ReturnType<typeof listOpenPrs>>
-    let sessionsByBranch: Awaited<ReturnType<typeof scanRepoSessions>>
-    let reviewsByBranch: Awaited<ReturnType<typeof scanReviewFiles>>
     let commentedByMe: Set<number>
     try {
-      ;[prs, sessionsByBranch, reviewsByBranch, commentedByMe] = await Promise.all([
-        listOpenPrs(repo),
-        scanRepoSessions(path),
-        scanReviewFiles(path),
-        listCommentedByMe(repo, me),
-      ])
+      ;[prs, commentedByMe] = await Promise.all([listOpenPrs(repo), listCommentedByMe(repo, me)])
     } catch (e) {
       console.error(`sync failed for ${repo}:`, e)
       logError('sync', e, `repo ${repo}`)
       continue // don't let one repo break the pass (or falsely auto-clear its tasks)
     }
+    // The local scans only decorate the cards (linked sessions, review reports), so they are asked
+    // for after the PR list and can't cost the repo its PRs: a failing scan sat in the same
+    // Promise.all, rejecting it and skipping the upsert loop below, so a single unreadable checkout
+    // meant every PR opened from then on never reached the board.
+    const [sessionsByBranch, reviewsByBranch] = await Promise.all([
+      scanRepoSessions(path).catch((e) => {
+        logError('sync', e, `session scan ${repo}`)
+        return new Map<string, string[]>()
+      }),
+      scanReviewFiles(path).catch((e) => {
+        logError('sync', e, `review scan ${repo}`)
+        return new Map<string, string[]>()
+      }),
+    ])
     polledRepos.add(repo)
     for (const pr of prs) {
       if (pr.author.login === me) continue // never track my own PRs

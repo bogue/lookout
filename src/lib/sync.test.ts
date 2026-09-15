@@ -30,7 +30,7 @@ vi.mock('./reviews', () => ({ scanReviewFiles: vi.fn() }))
 vi.mock('./sessions', () => ({ scanRepoSessions: vi.fn() }))
 
 import { getConfig } from './config'
-import { allTasks, setPrState, setStage } from './db'
+import { allTasks, setPrState, setStage, upsertPr } from './db'
 import { fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
 import { scanReviewFiles } from './reviews'
 import { scanRepoSessions } from './sessions'
@@ -118,5 +118,55 @@ describe('syncAll — PR state reconciliation', () => {
 
     expect(fetchPrState).not.toHaveBeenCalled()
     expect(setPrState).not.toHaveBeenCalled()
+  })
+})
+
+describe('syncAll — a local scan that fails', () => {
+  const theirPr = {
+    number: 2,
+    title: 'Their PR',
+    url: `https://github.com/${REPO}/pull/2`,
+    headRefName: 'their-branch',
+    author: { login: 'someone' },
+    createdAt: '2026-09-15T13:54:23Z',
+    isDraft: false,
+    reviewRequests: [],
+    latestReviews: [],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getConfig).mockResolvedValue({
+      githubUser: 'me',
+      repos: [{ repo: REPO, path: '/clone' }],
+      githubName: 'Me Name',
+      reviewButtons: [],
+      prButtons: [],
+      animations: true,
+      logging: false,
+    })
+    vi.mocked(allTasks).mockResolvedValue([])
+    vi.mocked(listOpenPrs).mockResolvedValue([theirPr])
+    vi.mocked(listCommentedByMe).mockResolvedValue(new Set())
+    vi.mocked(scanRepoSessions).mockResolvedValue(new Map())
+    vi.mocked(scanReviewFiles).mockResolvedValue(new Map())
+  })
+
+  // Both scans used to share a Promise.all with the gh calls, so an unreadable checkout rejected it
+  // and skipped the upsert loop: every PR opened after that point stayed off the board for good.
+  it('still boards the PRs the repo answered with when the review scan throws', async () => {
+    vi.mocked(scanReviewFiles).mockRejectedValue(new Error('forbidden path: /clone/.claude/worktrees/wt'))
+
+    await syncAll()
+
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, prNumber: 2 }))
+  })
+
+  it('still boards them when the session scan throws', async () => {
+    vi.mocked(scanRepoSessions).mockRejectedValue(new Error('Too many open files (os error 24)'))
+
+    await syncAll()
+
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, prNumber: 2 }))
   })
 })

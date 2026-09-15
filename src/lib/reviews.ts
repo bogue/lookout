@@ -1,5 +1,6 @@
 import { join } from '@tauri-apps/api/path'
 import { exists, readDir } from '@tauri-apps/plugin-fs'
+import { errText, logWarn } from './log'
 import { listWorktrees } from './worktrees'
 
 // Review exports: AI_TASKS/code-review/YYYY-MM-DD-HH-MM-<branch>.md.
@@ -27,14 +28,22 @@ export const scanReviewFiles = async (repoPath: string): Promise<Map<string, str
   const byBranch = new Map<string, string[]>()
   for (const w of await listWorktrees(repoPath)) {
     const dir = await join(w.path, 'AI_TASKS', 'code-review')
-    if (!(await exists(dir))) continue
-    for (const name of await listFiles(dir)) {
-      const m = name.match(/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-(.+)\.md$/)
-      if (!m) continue
-      const branch = m[1]
-      const files = byBranch.get(branch) ?? []
-      files.push(await join(dir, name))
-      byBranch.set(branch, files)
+    // A checkout the fs scope won't read (a worktree parked in a temp dir) makes `exists` throw.
+    // That used to reject the whole scan, and with it the sync pass that was fetching the repo's
+    // PRs at the same time — so one unreadable checkout stopped new PRs from ever being boarded.
+    // It now costs nothing but its own reports.
+    try {
+      if (!(await exists(dir))) continue
+      for (const name of await listFiles(dir)) {
+        const m = name.match(/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-(.+)\.md$/)
+        if (!m) continue
+        const branch = m[1]
+        const files = byBranch.get(branch) ?? []
+        files.push(await join(dir, name))
+        byBranch.set(branch, files)
+      }
+    } catch (e) {
+      logWarn('reviews', `skipped ${dir}: ${errText(e)}`)
     }
   }
   return byBranch

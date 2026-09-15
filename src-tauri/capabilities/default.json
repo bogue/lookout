@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. The Projects/**/.claude/** entry is not redundant with Projects/**: on unix tauri matches fs scope with require_literal_leading_dot, so no glob ever matches a dot component and a clone's .claude/worktrees has to be named outright.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -17,7 +17,11 @@
     "fs:allow-exists",
     {
       "identifier": "fs:scope",
-      "allow": [{ "path": "$HOME/.claude/**" }, { "path": "$HOME/Projects/**" }]
+      "allow": [
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/Projects/**" },
+        { "path": "$HOME/Projects/**/.claude/**" }
+      ]
     },
     {
       "identifier": "shell:allow-execute",
