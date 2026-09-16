@@ -5,6 +5,9 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
   Command: { create: (_cmd: string, _args: string[], _opts?: unknown) => ({ execute }) },
 }))
 
+const invoke = vi.fn()
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
+
 const PORCELAIN = `worktree /Projects/repo
 HEAD c82516fa
 branch refs/heads/main-work
@@ -26,6 +29,8 @@ const load = async () => {
 beforeEach(() => {
   execute.mockReset()
   execute.mockResolvedValue({ code: 0, stdout: PORCELAIN, stderr: '' })
+  invoke.mockReset()
+  invoke.mockResolvedValue(undefined)
 })
 
 describe('parseWorktrees', () => {
@@ -68,6 +73,40 @@ describe('listWorktrees', () => {
     })
     const { listWorktrees } = await load()
     expect((await listWorktrees('/Projects/repo')).map((w) => w.path)).toContain('/Projects/repo')
+  })
+})
+
+describe('fs scope', () => {
+  it('widens the scope to every checkout, including worktrees outside the clone', async () => {
+    const { listWorktrees } = await load()
+    await listWorktrees('/Projects/repo')
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'allow_path').map(([, args]) => args)).toEqual([
+      { path: '/Projects/repo' },
+      { path: '/Projects/repo-perf' },
+      { path: '/Projects/repo-detached' },
+    ])
+  })
+
+  it('asks once per path, not on every poll', async () => {
+    const { listWorktrees } = await load()
+    await listWorktrees('/Projects/repo')
+    invoke.mockClear()
+    // same porcelain, so the three known checkouts come back again; only the new clone is asked for
+    await listWorktrees('/Projects/repo-other')
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === 'allow_path').map(([, args]) => (args as { path: string }).path),
+    ).toEqual(['/Projects/repo-other'])
+  })
+
+  it('retries a path whose widen failed instead of caching the failure', async () => {
+    invoke.mockRejectedValueOnce(new Error('nope'))
+    const { listWorktrees } = await load()
+    await listWorktrees('/Projects/repo')
+    const first = invoke.mock.calls.filter(([cmd]) => cmd === 'allow_path').length
+    invoke.mockClear()
+    await listWorktrees('/Projects/repo-again')
+    expect(first).toBe(3)
+    expect(invoke.mock.calls.filter(([, args]) => (args as { path: string }).path === '/Projects/repo')).toHaveLength(1)
   })
 })
 

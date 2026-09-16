@@ -1,7 +1,34 @@
 mod applog;
 mod cli_bridge;
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
 use tauri::Manager;
+use tauri_plugin_fs::FsExt;
+
+// Watched clones and their worktrees live wherever the user keeps them, so the capability file
+// can't name them up front — it only covers what is knowable at build time. Each checkout the UI
+// touches is added to the runtime fs scope instead, which `resolve_path` ORs with the capability
+// scope. The set keeps a 10-minute poll from pushing the same globs over and over.
+#[derive(Default)]
+struct AllowedPaths(Mutex<HashSet<PathBuf>>);
+
+// Widen the fs scope to one checkout. Called with paths the user configured by hand, so consent
+// is the registration itself; nothing here widens the scope on its own.
+#[tauri::command]
+fn allow_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    {
+        let state = app.state::<AllowedPaths>();
+        let mut allowed = state.0.lock().map_err(|e| e.to_string())?;
+        if !allowed.insert(path.clone()) {
+            return Ok(());
+        }
+    }
+    app.fs_scope().allow_directory(&path, true).map_err(|e| e.to_string())
+}
 
 // Open (or focus) a PR browser window. Built from Rust so a navigation toolbar
 // (back/forward/reload + URL bar) can be injected into every page it loads.
@@ -135,8 +162,10 @@ pub fn run() {
                 )
                 .build(),
         )
+        .manage(AllowedPaths::default())
         .invoke_handler(tauri::generate_handler![
             open_pr_window,
+            allow_path,
             applog::log_append,
             applog::log_path,
             applog::log_clear

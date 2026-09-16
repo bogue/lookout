@@ -1,4 +1,5 @@
 import { Command } from '@tauri-apps/plugin-shell'
+import { allowPath } from './fsscope'
 
 export type Worktree = { path: string; branch: string | null }
 
@@ -37,6 +38,10 @@ export const listWorktrees = async (repoPath: string): Promise<Worktree[]> => {
     // git missing or the path isn't a clone: the configured path is the only checkout we know of
   }
   if (!list.some((w) => w.path === repoPath)) list = [{ path: repoPath, branch: null }, ...list]
+  // every checkout this returns is about to be read from (reports, sessions), and a linked
+  // worktree can sit outside the clone, so widen the fs scope to each one here rather than at
+  // each call site
+  await Promise.all(list.map((w) => allowPath(w.path)))
   cache.set(repoPath, { at: Date.now(), list })
   return list
 }

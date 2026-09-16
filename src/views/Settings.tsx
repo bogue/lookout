@@ -12,6 +12,7 @@ import { avatarUrl } from '../lib/avatar'
 import { CONDITION_FIELDS } from '../lib/buttons'
 import { listSlashCommands } from '../lib/commands'
 import { DEFAULT_PR_BUTTONS, DEFAULT_REVIEW_BUTTONS } from '../lib/config'
+import { allowPath } from '../lib/fsscope'
 import { repoFromPath } from '../lib/gh'
 import { clearLog, logPath } from '../lib/log'
 import { notify } from '../lib/notify'
@@ -428,8 +429,10 @@ export const Settings = ({
     setAddError(null)
     try {
       if (config.repos.some((r) => r.path === cleaned)) throw new Error('This path is already watched.')
-      if (!(await exists(cleaned).catch(() => false)))
-        throw new Error('Path not found (must exist and live under ~/Projects).')
+      // the scope has to be widened before the check, or `exists` reports a forbidden path as a
+      // missing one for every clone outside the paths the capability file can name
+      await allowPath(cleaned)
+      if (!(await exists(cleaned).catch(() => false))) throw new Error('Path not found.')
       const repo = await repoFromPath(cleaned).catch(() => null)
       if (!repo) throw new Error('No GitHub origin found — is this a git clone with an origin remote?')
       onSave([...config.repos, { repo, path: cleaned }])
