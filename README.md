@@ -39,11 +39,20 @@ xattr -dr com.apple.quarantine /Applications/Lookout.app
 ## Dev
 
 ```bash
-npm install
-npm run tauri dev
+pnpm install
+pnpm tauri dev
 ```
 
-Requirements: Rust toolchain, `gh` (authenticated), `claude` CLI.
+Requirements:
+
+- **Rust** (stable) — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`. Without it
+  `pnpm tauri dev` dies at `cargo metadata … No such file or directory (os error 2)`.
+- **Xcode Command Line Tools** — `xcode-select --install`, for the linker `cargo` shells out to.
+- **`gh`** (authenticated) and the **`claude`** CLI.
+
+pnpm is pinned by the `packageManager` field — `corepack enable` picks up the right version.
+`npm install` can't build this tree: `package-lock.json` is stale, and resolving the missing dev
+deps from scratch crashes Arborist with `Cannot read properties of null (reading 'edgesOut')`.
 
 ## Usage
 
@@ -65,7 +74,7 @@ ln -sf /Applications/Lookout.app/Contents/Resources/lookout ~/.local/bin/lookout
 ```
 
 It runs on Node 22.13+ (or 23.4+), where `node:sqlite` stopped needing a flag. In a dev checkout:
-`npm run build:cli`, then symlink `dist-cli/lookout.mjs`. It moves cards from a terminal, so a Claude Code skill can
+`pnpm build:cli`, then symlink `dist-cli/lookout.mjs`. It moves cards from a terminal, so a Claude Code skill can
 report back once it has pushed comments — and it works whether or not the app is open, because it
 writes the same SQLite database the app uses.
 
