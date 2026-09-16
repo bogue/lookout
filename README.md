@@ -24,6 +24,11 @@ brew trust --cask chartrandf/lookout/lookout   # Homebrew 6+ gates third-party c
 brew install --cask lookout                    # --force to replace a hand-installed copy
 ```
 
+> All three lines are required, in order. Homebrew expands a bare `chartrandf/lookout` to
+> `chartrandf/homebrew-lookout`, which doesn't exist — so not even the fully-qualified
+> `brew install --cask chartrandf/lookout/lookout` can tap this repo on its own. Skip the `brew tap`
+> line and you get `Invalid usage: Casks must be fully-qualified` / `No Cask with this name exists`.
+
 ### Manual
 
 Grab the latest `.dmg` from [Releases](https://github.com/chartrandf/lookout/releases) (universal — Apple Silicon + Intel) and drag **Lookout** to Applications.
