@@ -27,7 +27,24 @@ fn allow_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
             return Ok(());
         }
     }
-    app.fs_scope().allow_directory(&path, true).map_err(|e| e.to_string())
+    // `.claude` needs a pattern of its own: `allow_directory` pushes `p` and `p/**`, and unix
+    // scope matching sets require_literal_leading_dot, so no glob ever matches a dot component —
+    // the same reason the capability file has to name `Projects/**/.claude/**` outright.
+    let widened = app
+        .fs_scope()
+        .allow_directory(&path, true)
+        .and_then(|()| app.fs_scope().allow_directory(path.join(".claude"), true));
+    if let Err(e) = widened {
+        // the globs never landed, so drop the path: left in, it reports this widen as done and
+        // short-circuits every retry
+        app.state::<AllowedPaths>()
+            .0
+            .lock()
+            .map_err(|err| err.to_string())?
+            .remove(&path);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 // Open (or focus) a PR browser window. Built from Rust so a navigation toolbar

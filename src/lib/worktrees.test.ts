@@ -108,6 +108,26 @@ describe('fs scope', () => {
     expect(first).toBe(3)
     expect(invoke.mock.calls.filter(([, args]) => (args as { path: string }).path === '/Projects/repo')).toHaveLength(1)
   })
+
+  it('holds the second caller until a widen already in flight lands', async () => {
+    let landed: () => void = () => {}
+    invoke.mockReturnValueOnce(new Promise<void>((resolve) => (landed = () => resolve())))
+    const { listWorktrees } = await load()
+    // sync.ts scans sessions and reviews for the same repo at once, and neither goes through the
+    // TTL cache on the first pass: the second scan must not read before the scope is open
+    let second = false
+    const calls = Promise.all([
+      listWorktrees('/Projects/repo'),
+      listWorktrees('/Projects/repo').then(() => {
+        second = true
+      }),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(second).toBe(false)
+    landed()
+    await calls
+    expect(second).toBe(true)
+  })
 })
 
 describe('pathForBranch', () => {
