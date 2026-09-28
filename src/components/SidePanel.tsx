@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isTextField, stepPanelWidth } from '../lib/panelwidth'
 
 type SidePanelApi = { close: () => void } // animated close, shared by the ✕, backdrop, and Esc
 
@@ -51,6 +52,19 @@ export const SidePanel = ({ onClose, children, initialWidth, minWidth = DEFAULT_
       window.removeEventListener('pointerup', onUp)
     }
   }, [minWidth])
+
+  // Cmd+← widens, Cmd+→ narrows — unless a text field has focus (caret navigation)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return
+      const dir = e.key === 'ArrowLeft' ? 1 : e.key === 'ArrowRight' ? -1 : 0
+      if (!dir || isTextField(document.activeElement)) return
+      e.preventDefault()
+      setWidth((w) => stepPanelWidth(w, dir, window.innerWidth))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Esc closes the panel, unless the caller consumes it first (e.g. an inner overlay)
   // biome-ignore lint/correctness/useExhaustiveDependencies: close is stable enough for this listener
