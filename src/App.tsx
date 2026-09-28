@@ -751,7 +751,6 @@ const App = () => {
               resumeRun(panelTask.id, 'reply', board, cwd, text, sessionId, runCallbacks(board), ACTION_TOOLS)
             }
           }}
-          onDismissRun={() => killRun(panelTask.id)}
           onCancel={() => cancelRun(panelTask.id)}
           onRunButton={(button) => runButton(panelTask, panelIsPr ? 'pr' : 'review', button)}
           onStageChange={(stage) => moveStage(panelTask.id, stage)}

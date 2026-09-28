@@ -219,3 +219,26 @@
   background: none;
   -webkit-text-fill-color: rgb(251 191 36 / 0.9);
 }
+
+/* terminal is running: a thin bar grows left to right across the top, then starts over */
+@keyframes terminal-progress {
+  from {
+    transform: scaleX(0);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+.terminal-progress {
+  transform-origin: left;
+  animation: terminal-progress 1.6s ease-in-out infinite;
+}
+/* motion off: a static full-width bar still says "running" */
+.no-anim .terminal-progress {
+  animation: none;
+}

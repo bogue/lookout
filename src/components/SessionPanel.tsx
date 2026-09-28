@@ -34,7 +34,6 @@ type Props = {
   onSnooze: (snoozed: boolean) => void
   onKill: () => void
   onCancel: () => void
-  onDismissRun: () => void
   onClose: () => void
   // fired on open with the card summary derived from the freshly-fetched timeline (per-card refresh)
   onRefresh?: (summary: TimelineSummary) => void
@@ -180,12 +179,12 @@ const UserLine = ({ text, onOpen }: { text: string; onOpen: (url: string, extern
       type="button"
       onClick={() => setOpen((s) => !s)}
       title={open ? 'Collapse' : 'Show the full prompt'}
-      className="cursor-pointer text-left font-medium text-grass-300"
+      className="cursor-pointer text-left font-mono text-grass-300"
     >
       {body}
     </button>
   ) : (
-    <p className="font-medium text-grass-300">{body}</p>
+    <p className="font-mono text-grass-300">{body}</p>
   )
 }
 
@@ -257,6 +256,26 @@ const FeedAvatar = ({ avatar, name }: { avatar: FeedEvent['avatar']; name: strin
   )
 }
 
+// placeholder bubbles in the shape of the chat, bottom-anchored like the real one so nothing jumps on load
+const SKELETON = [
+  { mine: false, w: '55%' },
+  { mine: false, w: '35%' },
+  { mine: true, w: '45%' },
+  { mine: false, w: '50%' },
+]
+
+const FeedSkeleton = () => (
+  <ul aria-label="Loading history" className="flex animate-pulse flex-col gap-4">
+    {SKELETON.map((b, i) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder
+      <li key={i} className={`flex items-end gap-2 ${b.mine ? 'flex-row-reverse' : ''}`}>
+        <span className="h-7 w-7 shrink-0 rounded-full bg-deck-800" />
+        <span style={{ width: b.w }} className="h-9 rounded-[18px] bg-deck-800" />
+      </li>
+    ))}
+  </ul>
+)
+
 export const SessionPanel = ({
   task,
   run,
@@ -270,7 +289,6 @@ export const SessionPanel = ({
   onSnooze,
   onKill,
   onCancel,
-  onDismissRun,
   onClose,
   onRefresh,
 }: Props) => {
@@ -281,8 +299,8 @@ export const SessionPanel = ({
   const [approved, setApproved] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [feed, setFeed] = useState<FeedEvent[] | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [report, setReport] = useState<{ title: string; content: string } | null>(null)
-  const [showRun, setShowRun] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const runRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true) // terminal tails the output until you scroll away from the bottom
@@ -294,16 +312,12 @@ export const SessionPanel = ({
   useEffect(() => {
     setFeed(null)
     setReport(null)
+    scrollRef.current?.scrollTo({ top: 0 }) // column-reverse: top 0 is the bottom, newest events
     buildFeed(task, me, myName).then((r) => {
       setFeed(r.feed)
       onRefresh?.(r.summary) // patch this card from the timeline we just fetched
     })
   }, [task.id])
-
-  // chronological feed: keep the newest events in view, next to the reply input
-  useEffect(() => {
-    if (feed) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [feed])
 
   // a fresh run (or another card) starts tailing again
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm triggers only
@@ -317,7 +331,7 @@ export const SessionPanel = ({
     if (!el || !followRef.current) return
     el.scrollTop = el.scrollHeight
     autoTopRef.current = el.scrollTop
-  }, [run?.lines.length, showRun])
+  }, [run?.lines.length])
 
   // scrolling up stops the tail, snapping back to the bottom starts it again
   const onRunScroll = () => {
@@ -330,9 +344,15 @@ export const SessionPanel = ({
 
   // refresh history when a run finishes or a new report gets linked (no manual ↻ needed)
   const runIdle = run?.status === 'awaiting-input' || run?.status === 'closed'
+  const reloadFeed = () => {
+    setRefreshing(true)
+    buildFeed(task, me, myName)
+      .then((r) => setFeed(r.feed))
+      .finally(() => setRefreshing(false))
+  }
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh triggers only
   useEffect(() => {
-    if (runIdle) buildFeed(task, me, myName).then((r) => setFeed(r.feed))
+    if (runIdle) reloadFeed()
   }, [runIdle, task.reviewFiles.length])
 
   const openReport = async (path: string) => {
@@ -519,232 +539,226 @@ export const SessionPanel = ({
             )}
           </div>
 
-          {running && (
-            <div className="flex items-center gap-2.5 border-b border-amber-500/30 bg-amber-500/15 px-4 py-2 text-sm text-amber-200">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
-              </span>
-              claude is working — {run?.command} in progress…
-              <button
-                type="button"
-                onClick={onKill}
-                title="Stop this run (the session stays resumable)"
-                className="ml-auto cursor-pointer rounded border border-red-400/40 bg-red-500/20 px-2 py-0.5 text-xs text-red-200 hover:bg-red-500/40"
-              >
-                ■ stop
-              </button>
-            </div>
-          )}
-
-          {/* terminal stays pinned above the chat: only history events scroll */}
-          {run && run.lines.length > 0 && (
-            <div className="shrink-0 border-b border-deck-800 p-4 pb-3">
-              <div className="rounded-lg border border-deck-700 bg-deck-800/50">
-                <div className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-deck-400">
-                  <button
-                    type="button"
-                    onClick={() => setShowRun((s) => !s)}
-                    className="flex flex-1 cursor-pointer items-center justify-between"
-                  >
-                    <span>
-                      claude session output
-                      {run.command && <span className="ml-1.5 normal-case text-grass-400">· {run.command}</span>}
-                    </span>
-                    <span>{showRun ? '▾' : '▸'}</span>
-                  </button>
-                  {!running && (
+          {/* terminal sits above the chat, capped so history always keeps room; each scrolls on its own */}
+          {run && (running || run.lines.length > 0) && (
+            <div className="flex max-h-[45vh] shrink-0 flex-col border-b border-deck-800 p-4 pb-3">
+              {/* terminal window: title bar ($ claude · status · command), darker console body below */}
+              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-deck-700 bg-deck-900">
+                <div className="relative flex w-full items-center gap-2 border-b border-deck-700 px-4 py-2.5 font-mono text-sm">
+                  <span className="text-grass-400">$</span>
+                  <span className="text-deck-200">claude</span>
+                  {running && (
+                    <>
+                      <span className="relative flex h-2.5 w-2.5 shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+                      </span>
+                      <span className="text-amber-200">is working…</span>
+                    </>
+                  )}
+                  {run.command && <span className="ml-auto truncate text-xs text-deck-500">{run.command}</span>}
+                  {running && (
                     <button
                       type="button"
-                      onClick={onDismissRun}
-                      title="Dismiss this session output"
-                      className="cursor-pointer normal-case text-deck-500 hover:text-deck-200"
+                      onClick={onKill}
+                      title="Stop this run (the session stays resumable)"
+                      className={`shrink-0 cursor-pointer rounded border border-red-400/40 bg-red-500/20 px-2 py-0.5 font-sans text-xs text-red-200 hover:bg-red-500/40 ${run.command ? '' : 'ml-auto'}`}
                     >
-                      ✕
+                      ■ stop
                     </button>
                   )}
+                  {/* progress runs along the header's bottom border, under the $ claude line */}
+                  {running && (
+                    <div className="absolute inset-x-0 -bottom-px h-0.5 overflow-hidden" aria-hidden>
+                      <div className="terminal-progress h-full bg-amber-400" />
+                    </div>
+                  )}
                 </div>
-                {showRun && (
-                  <div
-                    ref={runRef}
-                    onScroll={onRunScroll}
-                    className="flex max-h-72 flex-col gap-2 overflow-y-auto px-3 pb-3 text-sm"
-                  >
-                    {groupLines(run.lines).map((group, gi) => {
-                      const openLink = (url: string, external: boolean) =>
-                        openPrWindow(url, task.repo, task.prNumber, external)
-                      const kind = group[0].kind
-                      const key = gi // append-only log: groups only ever grow or get appended to
-                      if (kind === 'tool')
-                        return (
-                          <div key={key} className="flex flex-col rounded bg-deck-900/60 px-2 py-1">
-                            {group.map((l, i) => (
-                              // biome-ignore lint/suspicious/noArrayIndexKey: append-only log
-                              <ToolLine key={i} text={l.text} />
-                            ))}
-                          </div>
-                        )
-                      if (kind === 'text')
-                        return (
-                          <Markdown
-                            key={key}
-                            className="md-console"
-                            text={group.map((l) => l.text).join('\n\n')}
-                            onLink={openLink}
-                          />
-                        )
-                      if (kind === 'user')
-                        return (
-                          <div key={key} className="flex flex-col gap-1">
-                            {group.map((l, i) => (
-                              // biome-ignore lint/suspicious/noArrayIndexKey: append-only log
-                              <UserLine key={i} text={l.text} onOpen={openLink} />
-                            ))}
-                          </div>
-                        )
+                <div
+                  ref={runRef}
+                  onScroll={onRunScroll}
+                  className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto bg-deck-950 px-4 py-3 text-sm"
+                >
+                  {groupLines(run.lines).map((group, gi) => {
+                    const openLink = (url: string, external: boolean) =>
+                      openPrWindow(url, task.repo, task.prNumber, external)
+                    const kind = group[0].kind
+                    const key = gi // append-only log: groups only ever grow or get appended to
+                    if (kind === 'tool')
+                      return (
+                        <div key={key} className="flex flex-col rounded bg-deck-900/60 px-2 py-1">
+                          {group.map((l, i) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: append-only log
+                            <ToolLine key={i} text={l.text} />
+                          ))}
+                        </div>
+                      )
+                    if (kind === 'text')
+                      return (
+                        <Markdown
+                          key={key}
+                          className="md-console"
+                          text={group.map((l) => l.text).join('\n\n')}
+                          onLink={openLink}
+                        />
+                      )
+                    if (kind === 'user')
                       return (
                         <div key={key} className="flex flex-col gap-1">
                           {group.map((l, i) => (
                             // biome-ignore lint/suspicious/noArrayIndexKey: append-only log
-                            <p key={i} className="font-mono text-xs text-red-400">
-                              <Linkify text={l.text} onOpen={openLink} />
-                            </p>
+                            <UserLine key={i} text={l.text} onOpen={openLink} />
                           ))}
                         </div>
                       )
-                    })}
-                    {running && <p className="animate-pulse text-xs text-deck-500">▍</p>}
-                  </div>
-                )}
+                    return (
+                      <div key={key} className="flex flex-col gap-1">
+                        {group.map((l, i) => (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: append-only log
+                          <p key={i} className="font-mono text-xs text-red-400">
+                            <Linkify text={l.text} onOpen={openLink} />
+                          </p>
+                        ))}
+                      </div>
+                    )
+                  })}
+                  {running && <span className="h-4 w-2 shrink-0 animate-pulse bg-grass-400/80" aria-hidden />}
+                </div>
               </div>
             </div>
           )}
 
-          <div ref={scrollRef} className="flex flex-1 flex-col overflow-y-auto bg-deck-950 px-4 pb-4">
-            {/* mt-auto anchors the chat to the bottom until it overflows, like a real chat */}
-            <div className="mt-auto">
-              <h4 className="sticky top-0 z-10 -mx-4 flex items-center justify-between bg-deck-950 px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-deck-400">
-                history
-                <button
-                  type="button"
-                  onClick={() => buildFeed(task, me, myName).then((r) => setFeed(r.feed))}
-                  className="cursor-pointer text-deck-500 hover:text-deck-200"
-                  title="Refresh history"
-                >
-                  ↻
-                </button>
-              </h4>
-              {!feed && <p className="text-sm text-deck-500">loading history…</p>}
-              {feed?.length === 0 && <p className="text-sm text-deck-500">No events yet.</p>}
-              <ul className="flex flex-col">
-                {feed?.map((e, i) => {
-                  // a report reads as a title ("📄 Review done (See Report)")
-                  const isReport = Boolean(e.filePath || e.body)
-                  const name = feedName(e)
-                  // a run of messages from one person shows who once, on its first message
-                  const prev = feed[i - 1]
-                  const grouped = prev !== undefined && prev.mine === e.mine && feedName(prev) === name
-                  // ✓✓ = that claude session has concluded (not running anymore)
-                  const done = e.sessionId && !(run?.sessionId === e.sessionId && run.status === 'running')
-                  const meta = (
-                    <>
-                      {messageTime(e.ts)}
-                      {done && <span className="ml-1 text-grass-400">✓✓</span>}
-                    </>
-                  )
-                  // messenger-style stamp: an invisible copy at the end of the text reserves the room, so
-                  // the real one, pinned bottom-right and dipping into the bottom padding, shares the last
-                  // line when it fits and wraps when not
-                  const body = (
-                    <>
-                      <span className="mr-1.5">{e.icon}</span>
-                      <span className={e.filePath || e.body || e.url || e.sessionId ? 'group-hover:underline' : ''}>
-                        {e.text}
-                        {isReport && ' (See Report) ↗'}
-                        {e.sessionId && ' 👻'}
-                      </span>
-                      <span aria-hidden className="invisible ml-2 text-[10px]">
-                        {meta}
-                      </span>
-                      <span
-                        className="absolute right-2.5 bottom-1 text-[10px] text-deck-500"
-                        title={`${new Date(e.ts).toLocaleString()}${done ? ' · session completed' : ''}`}
-                      >
-                        {meta}
-                      </span>
-                    </>
-                  )
-                  // 18px = half a one-line bubble (8 + 20 + 8 px tall, leading-5 so an emoji can't grow the
-                  // line): one line reads as a pill, centred, more lines as a softly squared box
-                  const bubbleClass = `relative rounded-[18px] border px-3 py-2 text-sm leading-5 ${
-                    e.mine
-                      ? 'border-grass-700/60 bg-grass-600/25 text-grass-100'
-                      : 'border-deck-700 bg-deck-800 text-deck-200'
-                  }`
-                  const bubble =
-                    e.filePath || e.body || e.url || e.sessionId ? (
-                      <button
-                        type="button"
-                        title={e.sessionId ? `Resume session ${e.sessionId} in Ghostty` : undefined}
-                        onClick={(ev) =>
-                          e.body
-                            ? openCaptured(e.body, e.text)
-                            : e.filePath
-                              ? openReport(e.filePath)
-                              : e.sessionId
-                                ? resumeSession(e.sessionId)
-                                : openPrWindow(e.url as string, task.repo, task.prNumber, ev.metaKey)
-                        }
-                        className={`${bubbleClass} group cursor-pointer text-left`}
-                      >
-                        {body}
-                      </button>
-                    ) : (
-                      <div className={bubbleClass}>{body}</div>
+          <div className="flex min-h-0 flex-1 flex-col bg-deck-950">
+            <h4 className="flex shrink-0 items-center justify-between px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-deck-400">
+              history
+              <button
+                type="button"
+                onClick={reloadFeed}
+                disabled={refreshing}
+                className="cursor-pointer text-deck-500 hover:text-deck-200 disabled:cursor-default"
+                title="Refresh history"
+              >
+                <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
+              </button>
+            </h4>
+            {/* column-reverse anchors the chat to the bottom natively: short history sits next to the
+                reply box, and the view stays pinned to the newest event while the terminal above resizes */}
+            <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-4 pb-4">
+              {!feed ? (
+                <FeedSkeleton />
+              ) : feed.length === 0 ? (
+                <p className="m-auto text-sm text-deck-500">No events yet.</p>
+              ) : (
+                <ul className="flex flex-col">
+                  {feed.map((e, i) => {
+                    // a report reads as a title ("📄 Review done (See Report)")
+                    const isReport = Boolean(e.filePath || e.body)
+                    const name = feedName(e)
+                    // a run of messages from one person shows who once, on its first message
+                    const prev = feed[i - 1]
+                    const grouped = prev !== undefined && prev.mine === e.mine && feedName(prev) === name
+                    // ✓✓ = that claude session has concluded (not running anymore)
+                    const done = e.sessionId && !(run?.sessionId === e.sessionId && run.status === 'running')
+                    const meta = (
+                      <>
+                        {messageTime(e.ts)}
+                        {done && <span className="ml-1 text-grass-400">✓✓</span>}
+                      </>
                     )
-                  return (
-                    <li
-                      // biome-ignore lint/suspicious/noArrayIndexKey: static snapshot list
-                      key={i}
-                      className={`flex items-start gap-2 ${e.mine ? 'flex-row-reverse' : ''} ${i === 0 ? '' : grouped ? 'mt-1' : 'mt-4'}`}
-                    >
-                      {grouped ? <span className="w-7 shrink-0" /> : <FeedAvatar avatar={e.avatar} name={name} />}
-                      <div className={`flex max-w-[60%] min-w-0 flex-col ${e.mine ? 'items-end' : 'items-start'}`}>
-                        {/* a reply always says what it answers, even inside a run from one person */}
-                        {(!grouped || e.replyTo) && (
-                          <span className="mb-0.5 flex items-center gap-1 text-[12px] leading-4 font-bold text-deck-400">
-                            {e.replyTo && <ReplyIcon />}
-                            {e.replyTo ? `Reply from ${name}` : name}
-                          </span>
-                        )}
-                        {e.replyTo ? (
-                          // the session this report answers sits behind it, like a card under a card:
-                          // 20px further left, same right edge, peeking out on top, squarer, content grayed
-                          <div className="grid">
-                            <div
-                              className="rounded-xl border border-grass-700/40 bg-grass-700/15 px-3 pt-2 pb-5 text-xs text-deck-300"
-                              title={
-                                e.replyTo.exact
-                                  ? 'The session this report was captured from'
-                                  : 'The last session started before this report (the file names none)'
-                              }
-                            >
-                              {/* the bubble stays solid; only what it says is toned down */}
-                              <span className="[filter:grayscale(70%)]">
-                                🤖 {e.replyTo.text} · {messageTime(e.replyTo.ts)}
-                              </span>
+                    // messenger-style stamp: an invisible copy at the end of the text reserves the room, so
+                    // the real one, pinned bottom-right and dipping into the bottom padding, shares the last
+                    // line when it fits and wraps when not
+                    const body = (
+                      <>
+                        <span className="mr-1.5">{e.icon}</span>
+                        <span className={e.filePath || e.body || e.url || e.sessionId ? 'group-hover:underline' : ''}>
+                          {e.text}
+                          {isReport && ' (See Report) ↗'}
+                          {e.sessionId && ' 👻'}
+                        </span>
+                        <span aria-hidden className="invisible ml-2 text-[10px]">
+                          {meta}
+                        </span>
+                        <span
+                          className="absolute right-2.5 bottom-1 text-[10px] text-deck-500"
+                          title={`${new Date(e.ts).toLocaleString()}${done ? ' · session completed' : ''}`}
+                        >
+                          {meta}
+                        </span>
+                      </>
+                    )
+                    // 18px = half a one-line bubble (8 + 20 + 8 px tall, leading-5 so an emoji can't grow the
+                    // line): one line reads as a pill, centred, more lines as a softly squared box
+                    const bubbleClass = `relative rounded-[18px] border px-3 py-2 text-sm leading-5 ${
+                      e.mine
+                        ? 'border-grass-700/60 bg-grass-600/25 text-grass-100'
+                        : 'border-deck-700 bg-deck-800 text-deck-200'
+                    }`
+                    const bubble =
+                      e.filePath || e.body || e.url || e.sessionId ? (
+                        <button
+                          type="button"
+                          title={e.sessionId ? `Resume session ${e.sessionId} in Ghostty` : undefined}
+                          onClick={(ev) =>
+                            e.body
+                              ? openCaptured(e.body, e.text)
+                              : e.filePath
+                                ? openReport(e.filePath)
+                                : e.sessionId
+                                  ? resumeSession(e.sessionId)
+                                  : openPrWindow(e.url as string, task.repo, task.prNumber, ev.metaKey)
+                          }
+                          className={`${bubbleClass} group cursor-pointer text-left`}
+                        >
+                          {body}
+                        </button>
+                      ) : (
+                        <div className={bubbleClass}>{body}</div>
+                      )
+                    return (
+                      <li
+                        // biome-ignore lint/suspicious/noArrayIndexKey: static snapshot list
+                        key={i}
+                        className={`flex items-start gap-2 ${e.mine ? 'flex-row-reverse' : ''} ${i === 0 ? '' : grouped ? 'mt-1' : 'mt-4'}`}
+                      >
+                        {grouped ? <span className="w-7 shrink-0" /> : <FeedAvatar avatar={e.avatar} name={name} />}
+                        <div className={`flex max-w-[60%] min-w-0 flex-col ${e.mine ? 'items-end' : 'items-start'}`}>
+                          {/* a reply always says what it answers, even inside a run from one person */}
+                          {(!grouped || e.replyTo) && (
+                            <span className="mb-0.5 flex items-center gap-1 text-[12px] leading-4 font-bold text-deck-400">
+                              {e.replyTo && <ReplyIcon />}
+                              {e.replyTo ? `Reply from ${name}` : name}
+                            </span>
+                          )}
+                          {e.replyTo ? (
+                            // the session this report answers sits behind it, like a card under a card:
+                            // 20px further left, same right edge, peeking out on top, squarer, content grayed
+                            <div className="grid">
+                              <div
+                                className="rounded-xl border border-grass-700/40 bg-grass-700/15 px-3 pt-2 pb-5 text-xs text-deck-300"
+                                title={
+                                  e.replyTo.exact
+                                    ? 'The session this report was captured from'
+                                    : 'The last session started before this report (the file names none)'
+                                }
+                              >
+                                {/* the bubble stays solid; only what it says is toned down */}
+                                <span className="[filter:grayscale(70%)]">
+                                  🤖 {e.replyTo.text} · {messageTime(e.replyTo.ts)}
+                                </span>
+                              </div>
+                              {/* opaque underlay: the front bubble's tint is translucent and would show the back one */}
+                              <div className="-mt-3 ml-[20px] rounded-[18px] bg-deck-950">{bubble}</div>
                             </div>
-                            {/* opaque underlay: the front bubble's tint is translucent and would show the back one */}
-                            <div className="-mt-3 ml-[20px] rounded-[18px] bg-deck-950">{bubble}</div>
-                          </div>
-                        ) : (
-                          bubble
-                        )}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
+                          ) : (
+                            bubble
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </div>
           </div>
 
