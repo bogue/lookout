@@ -17,7 +17,13 @@ import { capturedReviewCount, clearCapturedReviews } from '../lib/db'
 import { allowPath } from '../lib/fsscope'
 import { repoFromPath } from '../lib/gh'
 import { clearLog, logPath } from '../lib/log'
-import { notify } from '../lib/notify'
+import {
+  type NotificationStatus,
+  notificationStatus,
+  notify,
+  openNotificationSettings,
+  requestNotifications,
+} from '../lib/notify'
 import type { ActionButton, ButtonBoard, Config, ReviewTask, WatchedRepo } from '../types'
 import { History } from './History'
 
@@ -31,6 +37,7 @@ type Props = {
   onSaveLogging: (on: boolean) => void
   onSaveCaptureReviews: (on: boolean) => void
   onSaveOpenInBrowser: (on: boolean) => void
+  onSaveNotifications: (on: boolean) => void
 }
 
 // What to paste into ~/.claude/settings.json for instant capture. Lookout does not write that file
@@ -283,6 +290,7 @@ export const Settings = ({
   onSaveLogging,
   onSaveCaptureReviews,
   onSaveOpenInBrowser,
+  onSaveNotifications,
 }: Props) => {
   const [editing, setEditing] = useState<{ board: ButtonBoard; id: string } | null>(null) // the one action open in the side panel
   const [confirm, setConfirm] = useState<Confirm | null>(null) // a destructive change waiting for a yes
@@ -306,6 +314,7 @@ export const Settings = ({
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [autostart, setAutostart] = useState(false)
+  const [notifStatus, setNotifStatus] = useState<NotificationStatus>('prompt')
   const [version, setVersion] = useState('')
   const [logFile, setLogFile] = useState('')
   const [captured, setCaptured] = useState(0)
@@ -323,6 +332,9 @@ export const Settings = ({
     isEnabled()
       .then(setAutostart)
       .catch(() => {})
+    notificationStatus()
+      .then(setNotifStatus)
+      .catch(() => {}) // browser preview (no tauri): stays "prompt"
     getVersion()
       .then(setVersion)
       .catch(() => {}) // browser preview (no tauri): just leave it out
@@ -338,6 +350,20 @@ export const Settings = ({
       setAutostart(await isEnabled())
     } catch {
       // autostart unavailable in dev builds
+    }
+  }
+
+  // On = switched on here AND allowed by the OS. Switching it on is what asks the OS, so the prompt
+  // comes from a click rather than from a random sync.
+  const notificationsOn = config.notifications && notifStatus === 'granted'
+  const toggleNotifications = async () => {
+    if (notificationsOn) return onSaveNotifications(false)
+    try {
+      const granted = await requestNotifications()
+      setNotifStatus(await notificationStatus())
+      if (granted) onSaveNotifications(true)
+    } catch {
+      // browser preview (no tauri)
     }
   }
 
@@ -503,7 +529,7 @@ export const Settings = ({
       <div className="flex flex-col gap-3">
         <div>
           <h3 className="text-lg font-semibold text-deck-200">General</h3>
-          <p className="mt-0.5 text-xs text-deck-500">How Lookout starts, opens links and moves.</p>
+          <p className="mt-0.5 text-xs text-deck-500">How Lookout starts, opens links, moves and notifies.</p>
         </div>
         <div className="flex flex-col divide-y divide-deck-800 rounded-lg border border-deck-700">
           <ToggleRow
@@ -529,6 +555,42 @@ export const Settings = ({
             on={config.animations}
             onToggle={() => onSaveAnimations(!config.animations)}
           />
+
+          <ToggleRow
+            bare
+            label="Notifications"
+            hint="A macOS notification when a PR needs you or one of yours gets reviewed. Switching it on asks macOS for permission."
+            on={notificationsOn}
+            onToggle={toggleNotifications}
+          >
+            {notificationsOn && (
+              <div className="flex items-center gap-2 border-t border-deck-800 pt-2">
+                <span className="min-w-0 flex-1 text-xs text-deck-500">Check that banners show up.</span>
+                <button
+                  type="button"
+                  onClick={() => notify('Test notification', 'If you see this, OS notifications work.')}
+                  className="cursor-pointer rounded-md border border-deck-600 px-2 py-1 text-xs text-deck-300 hover:bg-deck-700"
+                >
+                  Send test
+                </button>
+              </div>
+            )}
+            {notifStatus === 'denied' && (
+              <div className="flex items-center gap-2 border-t border-deck-800 pt-2">
+                {/* macOS prompts once: after "Don't Allow" only System Settings can turn it back on */}
+                <span className="min-w-0 flex-1 text-xs text-deck-500">
+                  ⚠️ Blocked in System Settings — allow Lookout there, then switch this on.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openNotificationSettings().catch(() => {})}
+                  className="cursor-pointer rounded-md border border-deck-600 px-2 py-1 text-xs text-deck-300 hover:bg-deck-700"
+                >
+                  Open System Settings
+                </button>
+              </div>
+            )}
+          </ToggleRow>
         </div>
       </div>
 
@@ -607,22 +669,6 @@ export const Settings = ({
           </p>
         </div>
       </ToggleRow>
-
-      {import.meta.env.DEV && (
-        <div className="flex items-center justify-between rounded-lg border border-deck-700 p-3">
-          <div>
-            <p className="text-sm font-medium text-deck-200">Test notification</p>
-            <p className="text-xs text-deck-500">Dev only — fire an OS notification to verify permissions.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => notify('Test notification', 'If you see this, OS notifications work.')}
-            className="cursor-pointer rounded-md border border-deck-600 px-3 py-1.5 text-sm text-deck-300 hover:bg-deck-700"
-          >
-            Send test
-          </button>
-        </div>
-      )}
 
       <div className="mt-6 border-t border-deck-800 pt-4">
         <History tasks={tasks} />

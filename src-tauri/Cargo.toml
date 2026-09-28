@@ -32,6 +32,14 @@ tauri-plugin-autostart = "2.5.1"
 tauri-plugin-dialog = "2.7.1"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 # the CLI bridge socket (unix only: macOS + Linux)
-tokio = { version = "1", features = ["net", "io-util"] }
+tokio = { version = "1", features = ["net", "io-util", "sync"] }
 log = "0.4"
 
+
+# native macOS notifications (UNUserNotificationCenter): the notification plugin posts through the
+# deprecated NSUserNotificationCenter, which never registers the app, so release builds stay silent
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-user-notifications = "0.3"
+block2 = "0.6"

@@ -65,12 +65,18 @@ export const getConfig = async (): Promise<Config> => {
     // a switch they have to find first would leave the flow broken for exactly them.
     captureReviews: (await s.get<boolean>('captureReviews')) ?? true,
     openInBrowser: (await s.get<boolean>('openInBrowser')) ?? false,
+    notifications: (await s.get<boolean>('notifications')) ?? true,
   }
 }
 
 export const setOpenInBrowser = async (openInBrowser: boolean) => {
   const s = await getStore()
   await s.set('openInBrowser', openInBrowser)
+}
+
+export const setNotifications = async (notifications: boolean) => {
+  const s = await getStore()
+  await s.set('notifications', notifications)
 }
 
 export const setCaptureReviews = async (captureReviews: boolean) => {

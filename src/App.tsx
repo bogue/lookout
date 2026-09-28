@@ -14,6 +14,7 @@ import {
   setAnimations,
   setCaptureReviews,
   setLogging,
+  setNotifications,
   setOpenInBrowser,
   setPrButtons,
   setRepos,
@@ -45,7 +46,7 @@ import type { TimelineSummary } from './lib/feed'
 import { resumeInGhostty } from './lib/ghostty'
 import { logError, logWarn, setLogEnabled } from './lib/log'
 import { syncMyPrs } from './lib/myprs'
-import { onNotificationClick } from './lib/notify'
+import { onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
 import { fillPrompt } from './lib/prompt'
@@ -107,6 +108,7 @@ const App = () => {
     logging: false,
     captureReviews: true,
     openInBrowser: false,
+    notifications: true,
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -179,6 +181,7 @@ const App = () => {
         setConfig(cfg)
         setLogEnabled(cfg.logging)
         setOpenLinksInBrowser(cfg.openInBrowser)
+        setNotificationsEnabled(cfg.notifications)
         // run both boards at once: the PR board used to queue behind ~17 s of Reviews sync
         const [tasks, prs] = await Promise.all([syncAll(), syncMyPrs(cfg)])
         setTasks(tasks)
@@ -228,7 +231,7 @@ const App = () => {
     }
   }, [reload, reloadAlerts])
 
-  // OS notification click: mark read + open the card panel (plugin only delivers clicks on mobile today)
+  // OS notification click: mark read + open the card panel
   useEffect(() => {
     const listener = onNotificationClick(async ({ alertKey, taskId }) => {
       if (alertKey) await markAlertRead(alertKey)
@@ -240,7 +243,7 @@ const App = () => {
       }
     }).catch(() => null)
     return () => {
-      listener.then((l) => l?.unregister())
+      listener.then((un) => un?.())
     }
   }, [reloadAlerts])
 
@@ -725,6 +728,11 @@ const App = () => {
             onSaveOpenInBrowser={async (on) => {
               await setOpenInBrowser(on)
               setOpenLinksInBrowser(on) // the next click follows it, no reload needed
+              setConfig(await getConfig())
+            }}
+            onSaveNotifications={async (on) => {
+              await setNotifications(on)
+              setNotificationsEnabled(on)
               setConfig(await getConfig())
             }}
           />

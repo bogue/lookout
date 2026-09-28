@@ -1,5 +1,6 @@
 mod applog;
 mod cli_bridge;
+mod notifications;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -215,11 +216,16 @@ pub fn run() {
             allow_path,
             applog::log_append,
             applog::log_path,
-            applog::log_clear
+            applog::log_clear,
+            notifications::notification_permission,
+            notifications::notification_status,
+            notifications::notification_open_settings,
+            notifications::notification_send
         ])
         // the socket the `lookout` CLI pings after a write, so the board repaints immediately
         .setup(|app| {
             cli_bridge::start(app.handle());
+            notifications::init(app.handle());
             Ok(())
         })
         // Cmd+W on the board hides it instead of destroying it, so the Dock icon can bring it back
