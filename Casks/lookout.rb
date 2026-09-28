@@ -1,6 +1,6 @@
 cask "lookout" do
   version "0.4.5"
-  sha256 "2a7ebbf942e19259a9d57b6553a89c5a7e2b9a9424bd02ead025ba2ce6ea99f8"
+  sha256 "f9ceeecd9a441036ff9a2f43bbdf573717b05c1e97f81fdc3abf0f3872ba52d5"
 
   url "https://github.com/chartrandf/lookout/releases/download/v#{version}/Lookout_#{version}_universal.dmg"
   name "Lookout"
