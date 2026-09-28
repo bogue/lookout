@@ -36,6 +36,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   animations: true,
   logging: false,
   captureReviews: false,
+  openInBrowser: false,
 })
 
 const ghPr = (o: Partial<GhMyPr> = {}): GhMyPr => ({

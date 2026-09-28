@@ -152,4 +152,5 @@ export type Config = {
   animations: boolean // motion effects (running glow/sheen); colors stay either way
   logging: boolean // write errors to the debug log file (see src/lib/log.ts)
   captureReviews: boolean // recover a review from the session transcript when the skill exported no file
+  openInBrowser: boolean // links open in the default browser instead of the in-app window (prwindow.ts)
 }

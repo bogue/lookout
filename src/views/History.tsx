@@ -7,30 +7,47 @@ type Props = { tasks: ReviewTask[] }
 
 const openInVsCode = (path: string) => Command.create('code', [path]).spawn()
 
+// Collapsed by default: a long list of past reviews at the bottom of Settings, opened on demand.
 export const History = ({ tasks }: Props) => {
   const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
 
   const q = query.toLowerCase()
-  const items = tasks
-    .filter((t) => t.stage === 'done' || t.reviewFiles.length > 0)
+  const past = tasks.filter((t) => t.stage === 'done' || t.reviewFiles.length > 0)
+  const items = past
     .filter((t) => !q || `${t.prTitle} ${t.repo} ${t.branch} ${t.prAuthor}`.toLowerCase().includes(q))
     .sort((a, b) => (b.doneAt ?? b.updatedAt).localeCompare(a.doneAt ?? a.updatedAt))
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">History</h2>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="search title, repo, branch, author…"
-          className="w-72 rounded border border-deck-600 bg-deck-800 px-2 py-1.5 text-sm outline-none focus:border-grass-500"
-        />
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex cursor-pointer items-center gap-2 text-left text-lg font-semibold text-deck-200 hover:text-white"
+        >
+          <span className={`text-sm text-deck-500 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}>
+            ▶
+          </span>
+          History
+          <span className="text-sm font-normal text-deck-500">({past.length})</span>
+        </button>
+        {open && (
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search title, repo, branch, author…"
+            className="w-72 rounded border border-deck-600 bg-deck-800 px-2 py-1.5 text-sm outline-none focus:border-grass-500"
+          />
+        )}
       </div>
 
-      {items.length === 0 && <p className="text-sm text-deck-500">No past reviews yet.</p>}
+      {open && items.length === 0 && (
+        <p className="text-sm text-deck-500">{past.length === 0 ? 'No past reviews yet.' : 'Nothing matches.'}</p>
+      )}
 
-      <ul className="flex flex-col gap-2">
+      <ul className={`flex flex-col gap-2 ${open ? '' : 'hidden'}`}>
         {items.map((t) => (
           <li key={t.id} className="rounded-lg border border-deck-800 bg-deck-800/40 p-3">
             <div className="flex items-center gap-2">

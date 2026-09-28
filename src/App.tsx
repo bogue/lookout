@@ -14,6 +14,7 @@ import {
   setAnimations,
   setCaptureReviews,
   setLogging,
+  setOpenInBrowser,
   setPrButtons,
   setRepos,
   setReviewButtons,
@@ -48,6 +49,7 @@ import { onNotificationClick } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
 import { fillPrompt } from './lib/prompt'
+import { setOpenLinksInBrowser } from './lib/prwindow'
 import { sortReposByNames } from './lib/repoorder'
 import { scanReviewFiles } from './lib/reviews'
 import { cancelRun, closeRun, getRun, getRuns, killRun, replyRun, resumeRun, startRun, subscribeRuns } from './lib/runs'
@@ -104,6 +106,7 @@ const App = () => {
     animations: true,
     logging: false,
     captureReviews: true,
+    openInBrowser: false,
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -175,6 +178,7 @@ const App = () => {
         const cfg = await getConfig()
         setConfig(cfg)
         setLogEnabled(cfg.logging)
+        setOpenLinksInBrowser(cfg.openInBrowser)
         // run both boards at once: the PR board used to queue behind ~17 s of Reviews sync
         const [tasks, prs] = await Promise.all([syncAll(), syncMyPrs(cfg)])
         setTasks(tasks)
@@ -716,6 +720,11 @@ const App = () => {
             }}
             onSaveCaptureReviews={async (on) => {
               await setCaptureReviews(on)
+              setConfig(await getConfig())
+            }}
+            onSaveOpenInBrowser={async (on) => {
+              await setOpenInBrowser(on)
+              setOpenLinksInBrowser(on) // the next click follows it, no reload needed
               setConfig(await getConfig())
             }}
           />
