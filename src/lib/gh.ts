@@ -1,7 +1,7 @@
 import { Command } from '@tauri-apps/plugin-shell'
 import type { CiChecks, CiState } from '../types'
 import { errText, logError } from './log'
-import { ciChecks, hasConflicts, rollupToCiState } from './prboard'
+import { ciChecks, hasApproval, hasConflicts, rollupToCiState } from './prboard'
 
 // Every gh failure is logged here rather than at the call sites: most of them swallow the rejection
 // to keep one bad repo (or one unreachable PR) from emptying a board, which used to mean a broken
@@ -58,9 +58,17 @@ export const listOpenPrs = async (repo: string): Promise<GhPr[]> =>
     ]),
   )
 
-export const fetchPrState = async (repo: string, prNumber: number): Promise<'open' | 'merged' | 'closed'> => {
-  const out = JSON.parse(await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state']))
-  return out.state.toLowerCase() as 'open' | 'merged' | 'closed'
+// the approval rides along: a PR approved and merged between two syncs was never seen approved by
+// the open-PR listing
+export const fetchPrState = async (
+  repo: string,
+  prNumber: number,
+): Promise<{ state: 'open' | 'merged' | 'closed'; approved: boolean }> => {
+  const out = JSON.parse(await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,latestReviews']))
+  return {
+    state: out.state.toLowerCase() as 'open' | 'merged' | 'closed',
+    approved: hasApproval(out.latestReviews ?? []),
+  }
 }
 
 // PR numbers with a conversation comment from me (comments are not "reviews" in GitHub's model)

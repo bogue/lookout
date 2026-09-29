@@ -50,6 +50,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
     author={t.prAuthor}
     repo={t.repo}
     prNumber={t.prNumber}
+    approved={t.approved}
     onClick={onOpen}
     draggable
     onDragStart={(e) => {

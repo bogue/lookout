@@ -61,6 +61,11 @@ export const reviewFlavor = (reviews: Review[]): ReviewFlavor => {
   return null
 }
 
+// At least one human's latest review approves — even if another reviewer requested changes. Drives the
+// ✓ before a card's title, which is about "someone signed off", not the overall verdict.
+export const hasApproval = (reviews: Review[]): boolean =>
+  reviews.some((r) => !isBot(r.author) && r.state.toUpperCase() === 'APPROVED')
+
 // GitHub's verdict on where a PR belongs. This is only ever an *input* — what the board shows comes
 // from resolveColumn (prcolumns.ts), which moves a card forward and only when this verdict changes.
 //
@@ -119,6 +124,7 @@ export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr
     ciState: rollupToCiState(raw.statusCheckRollup ?? []),
     ciChecks: ciChecks(raw.statusCheckRollup ?? []),
     conflicts: hasConflicts(raw.mergeable),
+    approved: hasApproval(humanReviews),
     doneAt: raw.mergedAt ?? raw.closedAt ?? null,
     snoozed: false, // syncMyPrs carries a stored snooze over
   }

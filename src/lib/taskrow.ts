@@ -26,6 +26,7 @@ export type TaskRow = {
   ci_failed?: number | null // migration 017
   ci_total?: number | null
   conflicts?: number // migration 018
+  approved?: number // migration 019
   new_activity: number
   snoozed: number
   seen: number
@@ -55,6 +56,7 @@ export const toTask = (r: TaskRow): ReviewTask => ({
   ciState: r.ci_state as ReviewTask['ciState'],
   ciChecks: ciChecksOf(r.ci_failed, r.ci_total),
   conflicts: r.conflicts === 1,
+  approved: r.approved === 1,
   hasNewActivity: r.new_activity === 1,
   snoozed: r.snoozed === 1,
   seen: r.seen === 1,

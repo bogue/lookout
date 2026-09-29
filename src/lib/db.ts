@@ -45,13 +45,15 @@ export const upsertPr = async (t: {
   prCreatedAt: string
   reviewRequested: boolean
   isDraft: boolean
+  approved: boolean
 }) => {
   const d = await getDb()
   await d.execute(
-    `INSERT INTO tasks (id, repo, repo_path, branch, pr_number, pr_title, pr_url, pr_author, pr_created_at, review_requested, is_draft, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `INSERT INTO tasks (id, repo, repo_path, branch, pr_number, pr_title, pr_url, pr_author, pr_created_at, review_requested, is_draft, updated_at, approved)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      ON CONFLICT(id) DO UPDATE SET
-       pr_title = $6, pr_url = $7, pr_created_at = $9, review_requested = $10, is_draft = $11, repo_path = $3, updated_at = $12`,
+       pr_title = $6, pr_url = $7, pr_created_at = $9, review_requested = $10, is_draft = $11, repo_path = $3, updated_at = $12,
+       approved = $13`,
     [
       t.id,
       t.repo,
@@ -65,6 +67,7 @@ export const upsertPr = async (t: {
       t.reviewRequested ? 1 : 0,
       t.isDraft ? 1 : 0,
       new Date().toISOString(),
+      t.approved ? 1 : 0,
     ],
   )
 }
@@ -87,6 +90,11 @@ export const setPrState = async (id: string, prState: string) => {
     new Date().toISOString(),
     id,
   ])
+}
+
+export const setApproved = async (id: string, approved: boolean) => {
+  const d = await getDb()
+  await d.execute('UPDATE tasks SET approved = $1 WHERE id = $2', [approved ? 1 : 0, id])
 }
 
 export const setActivity = async (
@@ -251,12 +259,13 @@ export const upsertMyPr = async (pr: MyPr) => {
   await d.execute(
     `INSERT INTO my_prs (id, repo, repo_path, number, title, url, branch, pr_created_at, state, is_draft,
        human_review, bot_review, ci_state, derived_column, board_column, sort_order, done_at, updated_at, snoozed,
-       ci_failed, ci_total, conflicts)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+       ci_failed, ci_total, conflicts, approved)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
      ON CONFLICT(id) DO UPDATE SET
        repo_path = $3, title = $5, url = $6, branch = $7, state = $9, is_draft = $10,
        human_review = $11, bot_review = $12, ci_state = $13, derived_column = $14, board_column = $15,
-       done_at = $17, updated_at = $18, snoozed = $19, ci_failed = $20, ci_total = $21, conflicts = $22`,
+       done_at = $17, updated_at = $18, snoozed = $19, ci_failed = $20, ci_total = $21, conflicts = $22,
+       approved = $23`,
     [
       pr.id,
       pr.repo,
@@ -280,6 +289,7 @@ export const upsertMyPr = async (pr: MyPr) => {
       pr.ciChecks?.failed ?? null,
       pr.ciChecks?.total ?? null,
       pr.conflicts ? 1 : 0,
+      pr.approved ? 1 : 0,
     ],
   )
 }

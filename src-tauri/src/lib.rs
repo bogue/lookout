@@ -206,6 +206,12 @@ pub fn run() {
                             sql: include_str!("../migrations/018_conflicts.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 19,
+                            description: "approved by a reviewer",
+                            sql: include_str!("../migrations/019_approved.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

@@ -15,6 +15,7 @@ vi.mock('./db', () => ({
   setActivity: vi.fn(),
   setLinks: vi.fn(),
   setPrState: vi.fn(),
+  setApproved: vi.fn(),
   setSnoozed: vi.fn(),
   setStage: vi.fn(),
   syncAlerts: vi.fn(async () => []),
@@ -50,6 +51,7 @@ import {
   capturedCliTaskIds,
   deleteCapturedReview,
   pruneCapturedReviews,
+  setApproved,
   setPrState,
   setStage,
   upsertCapturedReview,
@@ -83,6 +85,7 @@ const task = (overrides: Partial<ReviewTask>): ReviewTask => ({
   ciState: null,
   ciChecks: null,
   conflicts: false,
+  approved: false,
   hasNewActivity: false,
   snoozed: false,
   seen: false,
@@ -118,7 +121,7 @@ describe('syncAll — PR state reconciliation', () => {
     // card was manually dragged to Done while its PR was still open
     const done = task({ stage: 'done', prState: 'open', doneAt: '2026-07-02T00:00:00Z' })
     vi.mocked(allTasks).mockResolvedValue([done])
-    vi.mocked(fetchPrState).mockResolvedValue('merged')
+    vi.mocked(fetchPrState).mockResolvedValue({ state: 'merged', approved: false })
 
     await syncAll()
 
@@ -131,12 +134,23 @@ describe('syncAll — PR state reconciliation', () => {
   it('still clears a non-Done card to Done when its PR merges', async () => {
     const active = task({ stage: 'reviewing', prState: 'open' })
     vi.mocked(allTasks).mockResolvedValue([active])
-    vi.mocked(fetchPrState).mockResolvedValue('merged')
+    vi.mocked(fetchPrState).mockResolvedValue({ state: 'merged', approved: false })
 
     await syncAll()
 
     expect(setPrState).toHaveBeenCalledWith(active.id, 'merged')
     expect(setStage).toHaveBeenCalledWith(active.id, 'done')
+  })
+
+  // approved then merged between two syncs: the open-PR listing never saw the approval
+  it('records an approval that landed just before the merge', async () => {
+    const active = task({ stage: 'reviewed', prState: 'open' })
+    vi.mocked(allTasks).mockResolvedValue([active])
+    vi.mocked(fetchPrState).mockResolvedValue({ state: 'merged', approved: true })
+
+    await syncAll()
+
+    expect(setApproved).toHaveBeenCalledWith(active.id, true)
   })
 
   it('does not re-query a Done card whose state is already resolved', async () => {
@@ -200,6 +214,15 @@ describe('syncAll — a local scan that fails', () => {
     await syncAll()
 
     expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, prNumber: 2 }))
+  })
+  it('flags a PR a human reviewer approved', async () => {
+    vi.mocked(listOpenPrs).mockResolvedValue([
+      { ...theirPr, latestReviews: [{ author: { login: 'alice' }, state: 'APPROVED' }] },
+    ])
+
+    await syncAll()
+
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, approved: true }))
   })
 })
 

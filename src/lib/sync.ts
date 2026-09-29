@@ -10,6 +10,7 @@ import {
   pruneCapturedReviews,
   pruneRepos,
   setActivity,
+  setApproved,
   setLinks,
   setPrState,
   setSnoozed,
@@ -21,6 +22,7 @@ import {
 import { fetchLogin, fetchName, fetchPrExchange, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
 import { logError } from './log'
 import { notify } from './notify'
+import { hasApproval } from './prboard'
 import { scanReviewFiles } from './reviews'
 import { approvedByMe, deriveStage } from './reviewstage'
 import { captureKind, scanRepoReviewSessions, scanRepoSessions, transcriptPath } from './sessions'
@@ -169,6 +171,7 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
         prCreatedAt: pr.createdAt,
         reviewRequested: pr.reviewRequests.some((r) => r.login === me),
         isDraft: pr.isDraft,
+        approved: hasApproval(pr.latestReviews),
       })
       const sessionIds = sessionsByBranch.get(pr.headRefName) ?? []
       // /do-review flattens "/" in branch names when building the report filename
@@ -197,9 +200,10 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
     // PR was still open would otherwise never pick up a later merge/close (it's skipped below).
     if (polledRepos.has(t.repo) && !openIds.has(t.id) && t.prState === 'open') {
       // tracked PR no longer open: distinguish merged vs closed
-      const state = await fetchPrState(t.repo, t.prNumber)
+      const { state, approved } = await fetchPrState(t.repo, t.prNumber)
       if (state !== 'open') {
         await setPrState(t.id, state)
+        if (approved !== t.approved) await setApproved(t.id, approved)
         if (t.stage !== 'done') await setStage(t.id, 'done')
         continue
       }

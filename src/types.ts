@@ -39,6 +39,7 @@ export type MyPr = {
   ciState: CiState
   ciChecks: CiChecks
   conflicts: boolean // GitHub can't merge it as is (and its CI usually hasn't run)
+  approved: boolean // at least one human reviewer approved (a ✓ before the title)
   doneAt: string | null // mergedAt / closedAt; Done keeps only the current day's cards
   snoozed: boolean // hidden until GitHub reports something new about the PR (myprs.ts)
 }
@@ -71,6 +72,7 @@ export type ReviewTask = {
   ciState: CiState
   ciChecks: CiChecks
   conflicts: boolean // GitHub can't merge it as is (and its CI usually hasn't run)
+  approved: boolean // at least one human reviewer approved (a ✓ before the title)
   hasNewActivity: boolean
   snoozed: boolean
   seen: boolean // acknowledged in Discovery (clears the "new" highlight and drops it from the count)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GhMyPr } from './gh'
-import { ciChecks, isBoardable, isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
+import { ciChecks, hasApproval, isBoardable, isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
 
 const REPO = 'owner/repo'
 
@@ -34,6 +34,17 @@ describe('isBot', () => {
   })
   it('treats a null author as non-bot', () => {
     expect(isBot(null)).toBe(false)
+  })
+})
+
+describe('hasApproval — a human approved, whatever the others said', () => {
+  it('is true with one human approval', () => expect(hasApproval([human('APPROVED')])).toBe(true))
+  it('is true even when another reviewer requested changes', () =>
+    expect(hasApproval([human('CHANGES_REQUESTED'), human('APPROVED', 'bob')])).toBe(true))
+  it('ignores bot approvals', () => expect(hasApproval([bot('APPROVED')])).toBe(false))
+  it('is false without any approval', () => {
+    expect(hasApproval([human('COMMENTED')])).toBe(false)
+    expect(hasApproval([])).toBe(false)
   })
 })
 
@@ -165,6 +176,21 @@ describe('toMyPr', () => {
     const pr = toMyPr(raw({ latestReviews: [human('APPROVED'), bot('CHANGES_REQUESTED')] }), REPO, '/clone')
     expect(pr.humanReview).toBe('approved')
     expect(pr.botReview).toBe('changes_requested')
+  })
+
+  it('flags an approval even when another reviewer requested changes', () => {
+    const pr = toMyPr(raw({ latestReviews: [human('APPROVED'), human('CHANGES_REQUESTED', 'bob')] }), REPO, '/clone')
+    expect(pr.approved).toBe(true)
+    expect(pr.humanReview).toBe('changes_requested')
+  })
+
+  it('drops the approval of a reviewer re-requested since', () => {
+    const pr = toMyPr(
+      raw({ latestReviews: [human('APPROVED', 'bob')], reviewRequests: [{ login: 'bob' }] }),
+      REPO,
+      '/clone',
+    )
+    expect(pr.approved).toBe(false)
   })
 
   it('surfaces the CI tag and stable id', () => {

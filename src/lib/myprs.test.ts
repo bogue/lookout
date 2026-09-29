@@ -73,6 +73,7 @@ const storedPr = (o: Partial<MyPr> = {}): MyPr => ({
   ciState: null,
   ciChecks: null,
   conflicts: false,
+  approved: false,
   doneAt: null,
   snoozed: false,
   ...o,

@@ -65,6 +65,7 @@ const PrCard = ({
     author={me}
     repo={pr.repo}
     prNumber={pr.number}
+    approved={pr.approved}
     onClick={() => onOpen(pr)}
     draggable
     onDragStart={(e) => {

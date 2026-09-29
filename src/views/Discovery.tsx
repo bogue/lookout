@@ -126,6 +126,7 @@ const DiscoveryCard = ({
     author={t.prAuthor}
     repo={t.repo}
     prNumber={t.prNumber}
+    approved={t.approved}
     wide={wide}
     onClick={(e) => {
       onSetSeen(t.id, true)

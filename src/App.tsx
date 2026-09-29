@@ -443,6 +443,7 @@ const App = () => {
     ciState: pr.ciState,
     ciChecks: pr.ciChecks,
     conflicts: pr.conflicts,
+    approved: pr.approved,
     hasNewActivity: false,
     snoozed: pr.snoozed,
     seen: true,
