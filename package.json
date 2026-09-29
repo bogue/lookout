@@ -1,7 +1,7 @@
 {
   "name": "lookout",
   "private": true,
-  "version": "0.4.5",
+  "version": "0.4.6",
   "type": "module",
   "bin": {
     "lookout": "dist-cli/lookout.mjs"
