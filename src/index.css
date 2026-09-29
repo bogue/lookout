@@ -145,11 +145,12 @@
 /* draft PRs: dashed border, content desaturated until hovered — the filter sits on the
    children so the card's own background/border keep their tint. focus-within keeps a row
    in color while an inner menu is in use (a filtered ancestor breaks its fixed overlay);
-   running/awaiting also stay in color (their amber/green must remain visible) */
+   running/awaiting also stay in color (their amber/green must remain visible). the ⋯ button
+   is skipped: this unlayered opacity would beat its hover-only opacity-0 */
 .card-draft {
   border-style: dashed;
 }
-.card-draft > * {
+.card-draft > :not(.card-menu-btn) {
   filter: grayscale(1);
   opacity: 0.75;
   transition: all 150ms;

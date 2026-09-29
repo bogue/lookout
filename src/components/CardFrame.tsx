@@ -71,7 +71,7 @@ export const CardFrame = ({
             const r = e.currentTarget.getBoundingClientRect()
             setMenuAt(menuAt ? null : { x: r.right - MENU_WIDTH, y: r.bottom + 4 })
           }}
-          className={`absolute top-2 right-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-deck-600 bg-deck-800 text-sm leading-none text-deck-300 hover:bg-deck-700 ${
+          className={`card-menu-btn absolute top-2 right-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-deck-600 bg-deck-800 text-sm leading-none text-deck-300 hover:bg-deck-700 ${
             menuAt ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
