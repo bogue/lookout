@@ -15,7 +15,9 @@ import { canApproveFrom, STAGES } from '../lib/stages'
 import { messageTime } from '../lib/time'
 import type { ActionButton, MergeMethod, MergePreference, ReviewTask, Stage } from '../types'
 import { ActionIcon } from './ActionIcon'
+import { BackButton } from './BackButton'
 import { CardMenuList } from './CardMenu'
+import { CloseButton } from './CloseButton'
 import { type Confirm, ConfirmDialog } from './ConfirmDialog'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
@@ -497,7 +499,9 @@ export const SessionPanel = ({
     : task.isDraft
       ? 'Draft — mark it ready for review first'
       : null
-  const showMerge = task.prState === 'open' && !!method && !!mergeOpts
+  // only once a reviewer approved; `approved` covers an approval I just gave from this panel, before
+  // the next sync records it
+  const showMerge = task.prState === 'open' && (task.approved || approved) && !!method && !!mergeOpts
 
   // Ghostty deep link; falls back to copying the resume command when Ghostty is missing
   const resumeSession = async (id: string) => {
@@ -560,13 +564,7 @@ export const SessionPanel = ({
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={close}
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xl leading-none text-deck-400 hover:text-deck-100"
-                >
-                  ✕
-                </button>
+                <CloseButton onClick={close} />
               </div>
             </div>
             <h2 className="mt-1.5 text-lg font-semibold leading-snug text-white">{task.prTitle}</h2>
@@ -611,10 +609,10 @@ export const SessionPanel = ({
                   onClick={approve}
                   disabled={approving || approved}
                   title="Approve the PR on GitHub and move it to Done"
-                  className="cursor-pointer rounded-md bg-grass-500 px-3 py-1.5 text-sm font-medium text-deck-950 hover:bg-grass-400 disabled:opacity-60"
+                  className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-60"
                 >
                   <span className="flex items-center gap-1.5">
-                    <CheckIcon /> {approved ? 'approved' : approving ? 'approving…' : 'approve'}
+                    <CheckIcon /> {approved ? 'Approved' : approving ? 'Approving…' : 'Approve'}
                   </span>
                 </button>
               )}
@@ -915,14 +913,7 @@ export const SessionPanel = ({
           {report && (
             <div className="absolute inset-0 z-30 flex flex-col bg-deck-900">
               <div className="flex items-center gap-2 border-b border-deck-800 px-4 py-2.5">
-                <button
-                  type="button"
-                  onClick={() => setReport(null)}
-                  title="Back to the PR panel"
-                  className="cursor-pointer rounded px-2 py-1 text-deck-300 hover:bg-deck-800 hover:text-deck-100"
-                >
-                  ← back
-                </button>
+                <BackButton onClick={() => setReport(null)} title="Back to the PR panel" />
                 <p className="min-w-0 flex-1 truncate font-mono text-xs text-deck-400">{report.title}</p>
               </div>
               <Markdown

@@ -7,6 +7,7 @@ import { exists } from '@tauri-apps/plugin-fs'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEffect, useState } from 'react'
 import { ActionChip, ActionEditor } from '../components/ActionEditor'
+import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { SidePanel } from '../components/SidePanel'
 import { dropAction } from '../lib/actionlist'
@@ -704,17 +705,9 @@ export const Settings = ({
           {({ close }) => (
             <>
               <div className="flex items-center gap-2 border-b border-deck-800 px-4 py-3">
-                <button
-                  type="button"
-                  onClick={close}
-                  title="Back to the list"
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-xl leading-none text-deck-400 hover:text-deck-100"
-                >
-                  ‹
-                </button>
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-white">Edit an action</h2>
-                  <p className="text-xs text-deck-500">{BOARD_META[editing.board].title}</p>
+                <h2 className="text-sm font-semibold text-white">Edit an Action</h2>
+                <div className="ml-auto">
+                  <CloseButton onClick={close} />
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4">
