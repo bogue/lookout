@@ -17,6 +17,7 @@ import { capturedReviewCount, clearCapturedReviews } from '../lib/db'
 import { allowPath } from '../lib/fsscope'
 import { repoFromPath } from '../lib/gh'
 import { clearLog, logPath } from '../lib/log'
+import { MERGE_METHODS } from '../lib/merge'
 import {
   type NotificationStatus,
   notificationStatus,
@@ -24,7 +25,7 @@ import {
   openNotificationSettings,
   requestNotifications,
 } from '../lib/notify'
-import type { ActionButton, ButtonBoard, Config, ReviewTask, WatchedRepo } from '../types'
+import type { ActionButton, ButtonBoard, Config, MergePreference, ReviewTask, WatchedRepo } from '../types'
 import { History } from './History'
 
 type Props = {
@@ -38,6 +39,7 @@ type Props = {
   onSaveCaptureReviews: (on: boolean) => void
   onSaveOpenInBrowser: (on: boolean) => void
   onSaveNotifications: (on: boolean) => void
+  onSaveMergeMethod: (m: MergePreference) => void
 }
 
 // What to paste into ~/.claude/settings.json for instant capture. Lookout does not write that file
@@ -291,6 +293,7 @@ export const Settings = ({
   onSaveCaptureReviews,
   onSaveOpenInBrowser,
   onSaveNotifications,
+  onSaveMergeMethod,
 }: Props) => {
   const [editing, setEditing] = useState<{ board: ButtonBoard; id: string } | null>(null) // the one action open in the side panel
   const [confirm, setConfirm] = useState<Confirm | null>(null) // a destructive change waiting for a yes
@@ -547,6 +550,28 @@ export const Settings = ({
             on={config.openInBrowser}
             onToggle={() => onSaveOpenInBrowser(!config.openInBrowser)}
           />
+
+          <div className="flex items-center justify-between gap-3 p-3">
+            <div>
+              <p className="text-sm font-medium text-deck-200">Default merge strategy</p>
+              <p className="text-xs text-deck-500">
+                What the Merge button does. A repo that doesn't allow it falls back to your GitHub default; ▾ on the
+                button picks another.
+              </p>
+            </div>
+            <select
+              value={config.mergeMethod}
+              onChange={(e) => onSaveMergeMethod(e.target.value as MergePreference)}
+              className="h-7 shrink-0 cursor-pointer rounded border border-deck-600 bg-deck-800 px-1.5 text-xs text-deck-200 outline-none"
+            >
+              {MERGE_METHODS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+              <option value="github">My GitHub default</option>
+            </select>
+          </div>
 
           <ToggleRow
             bare

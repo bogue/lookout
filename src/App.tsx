@@ -14,6 +14,7 @@ import {
   setAnimations,
   setCaptureReviews,
   setLogging,
+  setMergeMethod,
   setNotifications,
   setOpenInBrowser,
   setPrButtons,
@@ -109,6 +110,7 @@ const App = () => {
     captureReviews: true,
     openInBrowser: false,
     notifications: true,
+    mergeMethod: 'merge',
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -736,6 +738,10 @@ const App = () => {
               setNotificationsEnabled(on)
               setConfig(await getConfig())
             }}
+            onSaveMergeMethod={async (m) => {
+              await setMergeMethod(m)
+              setConfig(await getConfig())
+            }}
           />
         )}
       </main>
@@ -747,6 +753,7 @@ const App = () => {
           me={config.githubUser}
           myName={config.githubName}
           variant={panelIsPr ? 'pr' : 'review'}
+          mergeMethod={config.mergeMethod}
           buttons={visibleButtons(panelIsPr ? config.prButtons : config.reviewButtons, panelTask)}
           onReply={async (text) => {
             const board: ButtonBoard = panelIsPr ? 'pr' : 'review'

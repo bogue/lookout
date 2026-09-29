@@ -5,16 +5,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { cardActions } from '../lib/cardactions'
 import { buildFeed, type FeedEvent, type TimelineSummary } from '../lib/feed'
-import { approvePr } from '../lib/gh'
+import { approvePr, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
+import { MERGE_METHODS, type MergeOptions, pickMethod } from '../lib/merge'
 import { openPrWindow } from '../lib/prwindow'
 import type { Run, RunLine } from '../lib/runs'
 import { sessionCwd } from '../lib/sessions'
 import { canApproveFrom, STAGES } from '../lib/stages'
 import { messageTime } from '../lib/time'
-import type { ActionButton, ReviewTask, Stage } from '../types'
+import type { ActionButton, MergeMethod, MergePreference, ReviewTask, Stage } from '../types'
 import { ActionIcon } from './ActionIcon'
 import { CardMenuList } from './CardMenu'
+import { type Confirm, ConfirmDialog } from './ConfirmDialog'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
 import { SidePanel } from './SidePanel'
@@ -27,6 +29,7 @@ type Props = {
   // 'review' = the Reviews board (adds a built-in approve button + stage select).
   // 'pr' = the Pull Requests board for my own PRs.
   variant?: 'review' | 'pr'
+  mergeMethod: MergePreference // the Merge button's preselected strategy (Settings)
   buttons: ActionButton[] // user-configured action buttons, already filtered by their visibility conditions
   onReply: (text: string) => void
   onRunButton: (button: ActionButton) => void
@@ -282,6 +285,7 @@ export const SessionPanel = ({
   me,
   myName = '',
   variant = 'review',
+  mergeMethod,
   buttons,
   onReply,
   onRunButton,
@@ -298,6 +302,12 @@ export const SessionPanel = ({
   const [approving, setApproving] = useState(false)
   const [approved, setApproved] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [mergeOpts, setMergeOpts] = useState<MergeOptions | null>(null)
+  const [method, setMethod] = useState<MergeMethod | null>(null) // what the Merge button will do
+  const [methodMenu, setMethodMenu] = useState(false)
+  const [merging, setMerging] = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [feed, setFeed] = useState<FeedEvent[] | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [report, setReport] = useState<{ title: string; content: string } | null>(null)
@@ -307,6 +317,11 @@ export const SessionPanel = ({
   const autoTopRef = useRef(-1)
   const reportRef = useRef<{ title: string; content: string } | null>(null)
   reportRef.current = report
+  const confirmOpenRef = useRef(false)
+  confirmOpenRef.current = !!confirm
+  const methodMenuRef = useRef(false)
+  methodMenuRef.current = methodMenu
+  const mergeBoxRef = useRef<HTMLDivElement>(null)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild feed when switching task
   useEffect(() => {
@@ -318,6 +333,31 @@ export const SessionPanel = ({
       onRefresh?.(r.summary) // patch this card from the timeline we just fetched
     })
   }, [task.id])
+
+  // which strategies this repo allows, for the Merge button (an open PR only)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when switching task
+  useEffect(() => {
+    setMergeOpts(null)
+    setMergeError(null)
+    setMethodMenu(false)
+    if (task.prState !== 'open') return
+    fetchMergeOptions(task.repo)
+      .then((o) => {
+        setMergeOpts(o)
+        setMethod(pickMethod(o, mergeMethod))
+      })
+      .catch(() => setMergeOpts(null)) // logged by gh.ts; no button rather than a broken one
+  }, [task.id, task.prState])
+
+  // the strategy menu closes on any click outside the Merge button and its menu
+  useEffect(() => {
+    if (!methodMenu) return
+    const outside = (e: MouseEvent) => {
+      if (!mergeBoxRef.current?.contains(e.target as Node)) setMethodMenu(false)
+    }
+    document.addEventListener('mousedown', outside)
+    return () => document.removeEventListener('mousedown', outside)
+  }, [methodMenu])
 
   // a fresh run (or another card) starts tailing again
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm triggers only
@@ -379,6 +419,11 @@ export const SessionPanel = ({
 
   // Esc first closes the report overlay if it's open; otherwise the shell closes the panel
   const onEscape = useCallback(() => {
+    if (confirmOpenRef.current) return true // the dialog closes itself on Esc; keep the panel open
+    if (methodMenuRef.current) {
+      setMethodMenu(false)
+      return true
+    }
     if (!reportRef.current) return false
     setReport(null)
     return true
@@ -418,6 +463,41 @@ export const SessionPanel = ({
       setApproving(false)
     }
   }
+
+  const merge = async (m: MergeMethod) => {
+    setMerging(true)
+    setMergeError(null)
+    try {
+      await mergePr(task.repo, task.prNumber, m)
+      if (!isPr) onStageChange('done')
+      reloadFeed() // the merged event patches the card's state through onRefresh
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message.replace(/^.*failed: /s, '') : String(e))
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  // a red build doesn't block the merge (GitHub decides whether checks are required), it only warns
+  const askMerge = () => {
+    if (!method) return
+    const label = MERGE_METHODS.find((x) => x.value === method)?.label ?? method
+    const red = task.ciState === 'fail'
+    const checks = task.ciChecks ? ` (${task.ciChecks.failed}/${task.ciChecks.total} checks failed)` : ''
+    setConfirm({
+      title: `Merge ${task.repo.split('/')[1]}#${task.prNumber}?`,
+      body: `${label}.${red ? ` ⚠️ CI is red${checks} — merge anyway?` : ''}`,
+      confirmLabel: red ? 'Merge anyway' : 'Merge',
+      onConfirm: () => merge(method),
+    })
+  }
+
+  const mergeBlocked = task.conflicts
+    ? 'Merge conflicts — fix the branch first'
+    : task.isDraft
+      ? 'Draft — mark it ready for review first'
+      : null
+  const showMerge = task.prState === 'open' && !!method && !!mergeOpts
 
   // Ghostty deep link; falls back to copying the resume command when Ghostty is missing
   const resumeSession = async (id: string) => {
@@ -524,19 +604,72 @@ export const SessionPanel = ({
                 </span>
               </button>
             ))}
-            {!isPr && (canApprove || approved) && (
-              <button
-                type="button"
-                onClick={approve}
-                disabled={approving || approved}
-                title="Approve the PR on GitHub and move it to Done"
-                className="ml-auto cursor-pointer rounded-md bg-grass-500 px-3 py-1.5 text-sm font-medium text-deck-950 hover:bg-grass-400 disabled:opacity-60"
-              >
-                <span className="flex items-center gap-1.5">
-                  <CheckIcon /> {approved ? 'approved' : approving ? 'approving…' : 'approve'}
-                </span>
-              </button>
-            )}
+            <div className="ml-auto flex gap-2">
+              {!isPr && (canApprove || approved) && (
+                <button
+                  type="button"
+                  onClick={approve}
+                  disabled={approving || approved}
+                  title="Approve the PR on GitHub and move it to Done"
+                  className="cursor-pointer rounded-md bg-grass-500 px-3 py-1.5 text-sm font-medium text-deck-950 hover:bg-grass-400 disabled:opacity-60"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CheckIcon /> {approved ? 'approved' : approving ? 'approving…' : 'approve'}
+                  </span>
+                </button>
+              )}
+              {showMerge && mergeOpts && method && (
+                <div ref={mergeBoxRef} className="relative flex">
+                  <button
+                    type="button"
+                    onClick={askMerge}
+                    disabled={merging || !!mergeBlocked}
+                    title={mergeBlocked ?? `${MERGE_METHODS.find((x) => x.value === method)?.label} on GitHub`}
+                    className={`cursor-pointer bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      mergeOpts.allowed.length > 1 ? 'rounded-l-md' : 'rounded-md'
+                    }`}
+                  >
+                    {merging
+                      ? 'Merging…'
+                      : method === 'merge'
+                        ? 'Merge PR'
+                        : method === 'squash'
+                          ? 'Squash & merge'
+                          : 'Rebase & merge'}
+                  </button>
+                  {mergeOpts.allowed.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setMethodMenu((s) => !s)}
+                      disabled={merging || !!mergeBlocked}
+                      title="Pick another merge strategy"
+                      className="cursor-pointer rounded-r-md border-l border-black/20 bg-grass-600 px-[9px] py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      ▾
+                    </button>
+                  )}
+                  {methodMenu && (
+                    <div className="absolute right-0 top-full z-40 mt-1 flex w-56 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
+                      {MERGE_METHODS.filter((m) => mergeOpts.allowed.includes(m.value)).map((m) => (
+                        <button
+                          key={m.value}
+                          type="button"
+                          onClick={() => {
+                            setMethod(m.value)
+                            setMethodMenu(false)
+                          }}
+                          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm text-deck-200 hover:bg-deck-700"
+                        >
+                          <span className="w-3 text-grass-400">{m.value === method ? '✓' : ''}</span>
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {mergeError && <p className="w-full text-xs text-red-300">could not merge: {mergeError}</p>}
             {run?.status === 'awaiting-input' && (
               <span className="self-center text-xs text-grass-300">awaiting input</span>
             )}
@@ -812,6 +945,7 @@ export const SessionPanel = ({
               )}
             </div>
           )}
+          {confirm && <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />}
         </>
       )}
     </SidePanel>

@@ -38,6 +38,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   captureReviews: false,
   openInBrowser: false,
   notifications: true,
+  mergeMethod: 'merge',
 })
 
 const ghPr = (o: Partial<GhMyPr> = {}): GhMyPr => ({

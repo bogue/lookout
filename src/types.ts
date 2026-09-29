@@ -145,6 +145,10 @@ export type ActionButton = {
   saveReport?: 'review' | 'followup' | 'off'
 }
 
+// a `gh pr merge` strategy, and the Settings preference ('github' = my default on GitHub's merge button)
+export type MergeMethod = 'merge' | 'squash' | 'rebase'
+export type MergePreference = MergeMethod | 'github'
+
 export type Config = {
   githubUser: string // GitHub login (e.g. chartrandf)
   githubName: string // GitHub profile / git author name (e.g. Francis Chartrand) — used to match my commits
@@ -156,4 +160,5 @@ export type Config = {
   captureReviews: boolean // recover a review from the session transcript when the skill exported no file
   openInBrowser: boolean // links open in the default browser instead of the in-app window (prwindow.ts)
   notifications: boolean // OS notifications for new alerts; the OS permission is asked when it's switched on
+  mergeMethod: MergePreference // the Merge button's default strategy, when the repo allows it
 }

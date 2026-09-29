@@ -1,5 +1,5 @@
 import { load, type Store } from '@tauri-apps/plugin-store'
-import type { ActionButton, Config, Stage, WatchedRepo } from '../types'
+import type { ActionButton, Config, MergePreference, Stage, WatchedRepo } from '../types'
 import { LEGACY_STAGE_IDS } from './stages'
 
 // Default buttons reproduce the old fixed actions. /review ships with Claude Code; the follow-up
@@ -66,12 +66,18 @@ export const getConfig = async (): Promise<Config> => {
     captureReviews: (await s.get<boolean>('captureReviews')) ?? true,
     openInBrowser: (await s.get<boolean>('openInBrowser')) ?? false,
     notifications: (await s.get<boolean>('notifications')) ?? true,
+    mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
   }
 }
 
 export const setOpenInBrowser = async (openInBrowser: boolean) => {
   const s = await getStore()
   await s.set('openInBrowser', openInBrowser)
+}
+
+export const setMergeMethod = async (mergeMethod: MergePreference) => {
+  const s = await getStore()
+  await s.set('mergeMethod', mergeMethod)
 }
 
 export const setNotifications = async (notifications: boolean) => {

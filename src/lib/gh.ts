@@ -1,6 +1,7 @@
 import { Command } from '@tauri-apps/plugin-shell'
-import type { CiChecks, CiState } from '../types'
+import type { CiChecks, CiState, MergeMethod } from '../types'
 import { errText, logError } from './log'
+import { type GhMergeSettings, type MergeOptions, mergeArgs, parseMergeOptions } from './merge'
 import { ciChecks, hasApproval, hasConflicts, rollupToCiState } from './prboard'
 
 // Every gh failure is logged here rather than at the call sites: most of them swallow the rejection
@@ -163,6 +164,24 @@ export const fetchPrTimeline = async (repo: string, prNumber: number): Promise<G
 
 export const approvePr = async (repo: string, prNumber: number) => {
   await gh(['pr', 'review', String(prNumber), '--repo', repo, '--approve'])
+}
+
+export const fetchMergeOptions = async (repo: string): Promise<MergeOptions> =>
+  parseMergeOptions(
+    JSON.parse(
+      await gh([
+        'repo',
+        'view',
+        repo,
+        '--json',
+        'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod',
+      ]),
+    ) as GhMergeSettings,
+  )
+
+// branch deletion is left to the repo's "automatically delete head branches" setting
+export const mergePr = async (repo: string, prNumber: number, method: MergeMethod) => {
+  await gh(mergeArgs(repo, prNumber, method))
 }
 
 export type GhReview = { author: { login?: string; is_bot?: boolean } | null; state: string; submittedAt: string }
