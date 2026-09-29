@@ -8,7 +8,6 @@ type Props = {
   author: string
   repo: string // owner/repo
   prNumber: number
-  approved?: boolean // a human reviewer approved: a green check before the title
   wide?: boolean // full-width layout (Discovery focus mode): repo#number sits under the action row
   className?: string // extra classes layered on the base card style
   onClick?: (e: MouseEvent) => void
@@ -32,7 +31,6 @@ export const CardFrame = ({
   author,
   repo,
   prNumber,
-  approved,
   wide,
   className,
   onClick,
@@ -81,14 +79,7 @@ export const CardFrame = ({
         </button>
       )}
       {menu && menuAt && <CardMenuPopover at={menuAt} onClose={closeMenu} {...menu} />}
-      <p className={`text-sm font-medium leading-snug ${menu ? 'pr-7' : ''}`}>
-        {approved && (
-          <span title="Approved" className="mr-1 text-grass-400">
-            ✓
-          </span>
-        )}
-        {title}
-      </p>
+      <p className={`text-sm font-medium leading-snug ${menu ? 'pr-7' : ''}`}>{title}</p>
       <div className="mt-1.5 flex items-center gap-1.5 text-xs text-deck-400">
         <img src={avatarUrl(author)} alt={author} className="h-4 w-4 rounded-full" />
         <span className="truncate font-medium text-deck-300">{author}</span>

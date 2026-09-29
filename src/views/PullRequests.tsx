@@ -25,7 +25,7 @@ const COLUMNS = PR_COLUMNS.filter((c) => c.value !== 'done')
 // and any bot review aren't shown on the card
 const ReviewTag = ({ flavor }: { flavor: ReviewFlavor }) =>
   flavor === 'approved' ? (
-    <span className="rounded bg-grass-500/20 px-1 py-0.5 text-grass-300">approved</span>
+    <span className="rounded bg-grass-500/20 px-1 py-0.5 text-grass-300">✓ approved</span>
   ) : flavor === 'changes_requested' ? (
     <span className="rounded bg-amber-500/20 px-1 py-0.5 text-amber-300">changes</span>
   ) : null
@@ -65,7 +65,6 @@ const PrCard = ({
     author={me}
     repo={pr.repo}
     prNumber={pr.number}
-    approved={pr.approved}
     onClick={() => onOpen(pr)}
     draggable
     onDragStart={(e) => {

@@ -50,7 +50,6 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
     author={t.prAuthor}
     repo={t.repo}
     prNumber={t.prNumber}
-    approved={t.approved}
     onClick={onOpen}
     draggable
     onDragStart={(e) => {
@@ -68,7 +67,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
       <span
         className={`rounded px-1 py-0.5 ${t.prState === 'merged' ? 'bg-purple-500/20 text-purple-300' : t.prState === 'open' ? 'bg-grass-500/20 text-grass-300' : 'bg-red-500/20 text-red-300'}`}
       >
-        {t.prState}
+        {t.prState === 'open' && t.approved ? '✓ approved' : t.prState}
       </span>
     )}
     {t.stage !== 'done' && (
