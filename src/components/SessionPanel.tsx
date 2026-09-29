@@ -347,7 +347,10 @@ export const SessionPanel = ({
   const reloadFeed = () => {
     setRefreshing(true)
     buildFeed(task, me, myName)
-      .then((r) => setFeed(r.feed))
+      .then((r) => {
+        setFeed(r.feed)
+        onRefresh?.(r.summary)
+      })
       .finally(() => setRefreshing(false))
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh triggers only
