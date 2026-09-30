@@ -13,6 +13,7 @@ import {
   streamItems,
 } from '../lib/db'
 import { logError } from '../lib/log'
+import { listSlashEntries, matchSlash, type SlashEntry, slashQuery } from '../lib/skills'
 import {
   applyStreamAction,
   columnOf,
@@ -132,11 +133,16 @@ const ReturnKey = () => <kbd className="rounded bg-black/20 px-1 font-sans text-
 // The dump: type or paste what I want done, one line each; a list of targets splits into one card
 // per target unless I say they go together. `#project` picks the project; with none, "All projects"
 // lets Haiku place each card, and the ones it can't place wait in Needs you.
+// one row of the caret dropdown: a #project or a /skill
+type MenuItem = { key: string; label: string; detail: string | null; insert: string }
+
 const Dump = ({
   repos,
+  slash,
   onAdd,
 }: {
   repos: WatchedRepo[]
+  slash: SlashEntry[] // my skills and commands, for `/`
   onAdd: (text: string, picked: string | null, queue: boolean) => void
 }) => {
   const [text, setText] = useState('')
@@ -149,13 +155,30 @@ const Dump = ({
   const picked = names.includes(repo) ? repo : names.length === 1 ? names[0] : null
   const preview = useMemo(() => parseDump(text, names, picked), [text, names, picked])
 
-  // #project dropdown: follows the caret; Esc hides it for that # only
+  // caret dropdown: `#` lists projects, `/` my skills and commands; Esc hides it for that token only
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [caret, setCaret] = useState(0)
   const [active, setActive] = useState(0)
   const [dismissedAt, setDismissedAt] = useState<number | null>(null)
   const tag = tagQuery(text, caret)
-  const suggestions = tag && tag.start !== dismissedAt ? tagSuggestions(tag.query, names) : []
+  const cmd = tag ? null : slashQuery(text, caret)
+  const at = tag ?? cmd
+  const suggestions: MenuItem[] =
+    !at || at.start === dismissedAt
+      ? []
+      : tag
+        ? tagSuggestions(tag.query, names).map((r) => ({
+            key: r,
+            label: `#${r.split('/')[1]}`,
+            detail: r,
+            insert: `#${tagFor(r, names)} `,
+          }))
+        : matchSlash(cmd?.query ?? '', slash).map((e) => ({
+            key: e.name,
+            label: `/${e.name}`,
+            detail: e.description,
+            insert: `/${e.name} `,
+          }))
   const pendingCaret = useRef<number | null>(null)
 
   // opening Stream is usually to dump something: the text box is ready to type in (once it exists —
@@ -173,11 +196,10 @@ const Dump = ({
     pendingCaret.current = null
   })
 
-  const pickTag = (r: string) => {
-    if (!tag) return
-    const inserted = `#${tagFor(r, names)} `
-    setText(`${text.slice(0, tag.start)}${inserted}${text.slice(caret)}`)
-    pendingCaret.current = tag.start + inserted.length
+  const pick = (item: MenuItem) => {
+    if (!at) return
+    setText(`${text.slice(0, at.start)}${item.insert}${text.slice(caret)}`)
+    pendingCaret.current = at.start + item.insert.length
     setActive(0)
   }
 
@@ -209,147 +231,171 @@ const Dump = ({
   const lines = text.split('\n').length
   const control = 'h-7 rounded-md text-xs' // every control in the footer row shares this height
   const n = preview.length
+  const menuOpen = suggestions.length > 0
+  const anyOpen = menuOpen || (listOpen && n > 1)
 
   return (
-    <div className="relative flex min-h-[130px] flex-col rounded-lg border border-grass-600/30 bg-grass-600/10 shadow-lg shadow-black/30 transition-colors focus-within:border-grass-500/70 focus-within:ring-1 focus-within:ring-grass-500/70">
-      {suggestions.length > 0 && (
+    <>
+      {/* full-screen blur behind an open dropdown (like search and notifications); the dump itself
+          rises above it. mousedown keeps the textarea's focus and caret */}
+      {anyOpen && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: click-away backdrop
         <div
-          role="listbox"
-          aria-label="Projects"
-          className="absolute bottom-full left-3 z-30 mb-2 max-h-72 w-[30rem] max-w-[calc(100vw-4rem)] overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl"
-        >
-          {suggestions.map((r, i) => (
-            <button
-              key={r}
-              type="button"
-              role="option"
-              aria-selected={i === active}
-              // mousedown, not click: the textarea keeps focus and its caret
-              onMouseDown={(e) => {
-                e.preventDefault()
-                pickTag(r)
-              }}
-              onMouseEnter={() => setActive(i)}
-              className={`flex w-full cursor-pointer items-baseline gap-4 px-3 py-2 text-left text-sm ${i === active ? 'bg-deck-700' : ''}`}
-            >
-              <span className="shrink-0 whitespace-nowrap font-medium text-deck-100">#{r.split('/')[1]}</span>
-              <span className="ml-auto min-w-0 truncate text-xs text-deck-500">{r}</span>
-            </button>
-          ))}
-        </div>
+          onMouseDown={(e) => {
+            e.preventDefault()
+            setDismissedAt(at?.start ?? null)
+            setListOpen(false)
+          }}
+          className="fixed inset-0 z-20 bg-black/30 backdrop-blur-sm"
+        />
       )}
-      <textarea
-        ref={inputRef}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value)
-          trackCaret(e.target)
-        }}
-        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-        onBlur={() => setDismissedAt(tag?.start ?? null)}
-        onFocus={() => setDismissedAt(null)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && e.metaKey) {
-            e.preventDefault()
-            add()
-            return
-          }
-          if (!suggestions.length) return
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault()
-            const step = e.key === 'ArrowDown' ? 1 : -1
-            setActive((a) => (a + step + suggestions.length) % suggestions.length)
-          } else if (e.key === 'Enter' || e.key === 'Tab') {
-            e.preventDefault()
-            pickTag(suggestions[Math.min(active, suggestions.length - 1)])
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            setDismissedAt(tag?.start ?? null)
-          }
-        }}
-        rows={Math.min(Math.max(lines, 1), 6)}
-        aria-label="What needs to be done"
-        placeholder="What needs to be done?  e.g. #my-project implement card 1,2,3,4"
-        className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 pt-3 pb-2 text-[17px] leading-relaxed text-deck-100 placeholder:text-deck-500 focus:outline-none"
-      />
-      <div className="flex items-center gap-2 border-t border-grass-600/20 px-3 py-2">
-        <select
-          value={names.includes(repo) ? repo : ''}
-          onChange={(e) => setRepo(e.target.value)}
-          aria-label="Project"
-          title="The project of lines with no #project tag"
-          className={`${control} max-w-[16rem] cursor-pointer truncate border border-deck-700 bg-deck-800 px-2 text-deck-200 focus:border-deck-500 focus:outline-none`}
-        >
-          <option value="">All projects</option>
-          {repos.map((r) => (
-            <option key={r.repo} value={r.repo}>
-              {r.repo}
-            </option>
-          ))}
-        </select>
-        {/* where the cards land: a setting of the dump, not a second button competing with Add */}
-        <fieldset aria-label="Add to" className={`${control} flex border border-deck-700 bg-deck-800 p-0.5`}>
-          {(
-            [
-              [false, 'Inbox', 'Land in Inbox: I decide later'],
-              [true, 'Queued', 'Land in Queued: ready to be picked up'],
-            ] as const
-          ).map(([q, label, title]) => (
-            <button
-              key={label}
-              type="button"
-              aria-pressed={queue === q}
-              title={title}
-              onClick={() => setQueue(q)}
-              className={`cursor-pointer rounded px-2.5 ${queue === q ? 'bg-deck-600 text-white' : 'text-deck-400 hover:text-deck-200'}`}
-            >
-              {label}
-            </button>
-          ))}
-        </fieldset>
-        {/* Add, and — when the dump splits — a caret listing the cards it will create */}
-        <div ref={listRef} className="relative ml-auto flex">
-          <button
-            type="button"
-            onClick={add}
-            disabled={!n}
-            className={`flex h-9 cursor-pointer items-center gap-2 rounded-md bg-grass-600 px-4 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40 ${n > 1 ? 'rounded-r-none' : ''}`}
+      <div
+        className={`relative flex min-h-[130px] flex-col rounded-lg border border-grass-600/30 bg-grass-600/10 shadow-lg shadow-black/30 transition-colors focus-within:border-grass-500/70 focus-within:ring-1 focus-within:ring-grass-500/70 ${anyOpen ? 'z-30' : ''}`}
+      >
+        {menuOpen && (
+          <div
+            role="listbox"
+            aria-label={tag ? 'Projects' : 'Skills and commands'}
+            className={`absolute bottom-full left-3 z-30 mb-2 max-h-72 ${tag ? 'w-[30rem]' : 'w-[40rem]'} max-w-[calc(100vw-4rem)] overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl`}
           >
-            <ReturnKey />
-            {n > 1 ? `Add ${n} cards` : 'Add card'}
-          </button>
-          {n > 1 && (
+            {suggestions.map((s, i) => (
+              <button
+                key={s.key}
+                type="button"
+                role="option"
+                aria-selected={i === active}
+                // mousedown, not click: the textarea keeps focus and its caret
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  pick(s)
+                }}
+                onMouseEnter={() => setActive(i)}
+                title={s.detail ?? undefined}
+                className={`flex w-full cursor-pointer items-baseline gap-4 px-3 py-2 text-left text-sm ${i === active ? 'bg-deck-700' : ''}`}
+              >
+                <span className="shrink-0 whitespace-nowrap font-medium text-deck-100">{s.label}</span>
+                {s.detail && (
+                  <span className={`min-w-0 flex-1 truncate text-xs text-deck-500 ${tag ? 'text-right' : ''}`}>
+                    {s.detail}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        <textarea
+          ref={inputRef}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            trackCaret(e.target)
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+          onBlur={() => setDismissedAt(at?.start ?? null)}
+          onFocus={() => setDismissedAt(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.metaKey) {
+              e.preventDefault()
+              add()
+              return
+            }
+            if (!suggestions.length) return
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault()
+              const step = e.key === 'ArrowDown' ? 1 : -1
+              setActive((a) => (a + step + suggestions.length) % suggestions.length)
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault()
+              pick(suggestions[Math.min(active, suggestions.length - 1)])
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setDismissedAt(at?.start ?? null)
+            }
+          }}
+          rows={Math.min(Math.max(lines, 1), 6)}
+          aria-label="What needs to be done"
+          placeholder="What needs to be done?  e.g. #my-project implement card 1,2,3,4"
+          className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 pt-3 pb-2 text-[17px] leading-relaxed text-deck-100 placeholder:text-deck-500 focus:outline-none"
+        />
+        <div className="flex items-center gap-2 border-t border-grass-600/20 px-3 py-2">
+          <select
+            value={names.includes(repo) ? repo : ''}
+            onChange={(e) => setRepo(e.target.value)}
+            aria-label="Project"
+            title="The project of lines with no #project tag"
+            className={`${control} max-w-[16rem] cursor-pointer truncate border border-deck-700 bg-deck-800 px-2 text-deck-200 focus:border-deck-500 focus:outline-none`}
+          >
+            <option value="">All projects</option>
+            {repos.map((r) => (
+              <option key={r.repo} value={r.repo}>
+                {r.repo}
+              </option>
+            ))}
+          </select>
+          {/* where the cards land: a setting of the dump, not a second button competing with Add */}
+          <fieldset aria-label="Add to" className={`${control} flex border border-deck-700 bg-deck-800 p-0.5`}>
+            {(
+              [
+                [false, 'Inbox', 'Land in Inbox: I decide later'],
+                [true, 'Queued', 'Land in Queued: ready to be picked up'],
+              ] as const
+            ).map(([q, label, title]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={queue === q}
+                title={title}
+                onClick={() => setQueue(q)}
+                className={`cursor-pointer rounded px-2.5 ${queue === q ? 'bg-deck-600 text-white' : 'text-deck-400 hover:text-deck-200'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </fieldset>
+          {/* Add, and — when the dump splits — a caret listing the cards it will create */}
+          <div ref={listRef} className="relative ml-auto flex">
             <button
               type="button"
-              onClick={() => setListOpen((o) => !o)}
-              aria-expanded={listOpen}
-              aria-label="Show the cards to create"
-              title="Show the cards to create"
-              className={`h-9 w-[25px] cursor-pointer rounded-md rounded-l-none text-xs border-l border-grass-700 bg-grass-600 text-white hover:bg-grass-500`}
+              onClick={add}
+              disabled={!n}
+              className={`flex h-9 cursor-pointer items-center gap-2 rounded-md bg-grass-600 px-4 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40 ${n > 1 ? 'rounded-r-none' : ''}`}
             >
-              {listOpen ? '▴' : '▾'}
+              <ReturnKey />
+              {n > 1 ? `Add ${n} cards` : 'Add card'}
             </button>
-          )}
-          {listOpen && n > 1 && (
-            <div className="absolute right-0 bottom-full z-30 mb-2 max-h-80 w-96 overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl">
-              <p className="px-3 py-1.5 text-xs text-deck-500">
-                {n} cards will be {queue ? 'queued' : 'added to your Inbox'}
-              </p>
-              <ol>
-                {preview.map((d, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: preview rows have no identity yet; two lines may read the same
-                  <li key={i} className="flex items-baseline gap-2 px-3 py-1.5 text-sm">
-                    <span className="w-4 shrink-0 text-right text-xs text-deck-500">{i + 1}</span>
-                    <span className="min-w-0 flex-1 truncate text-deck-100">{d.title}</span>
-                    {d.repo && <span className="shrink-0 text-xs text-deck-400">{d.repo.split('/')[1]}</span>}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
+            {n > 1 && (
+              <button
+                type="button"
+                onClick={() => setListOpen((o) => !o)}
+                aria-expanded={listOpen}
+                aria-label="Show the cards to create"
+                title="Show the cards to create"
+                className={`h-9 w-[25px] cursor-pointer rounded-md rounded-l-none text-xs border-l border-grass-700 bg-grass-600 text-white hover:bg-grass-500`}
+              >
+                {listOpen ? '▴' : '▾'}
+              </button>
+            )}
+            {listOpen && n > 1 && (
+              <div className="absolute right-0 bottom-full z-30 mb-2 max-h-80 w-96 overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl">
+                <p className="px-3 py-1.5 text-xs text-deck-500">
+                  {n} cards will be {queue ? 'queued' : 'added to your Inbox'}
+                </p>
+                <ol>
+                  {preview.map((d, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: preview rows have no identity yet; two lines may read the same
+                    <li key={i} className="flex items-baseline gap-2 px-3 py-1.5 text-sm">
+                      <span className="w-4 shrink-0 text-right text-xs text-deck-500">{i + 1}</span>
+                      <span className="min-w-0 flex-1 truncate text-deck-100">{d.title}</span>
+                      {d.repo && <span className="shrink-0 text-xs text-deck-400">{d.repo.split('/')[1]}</span>}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -386,6 +432,15 @@ export const Stream = ({ repos }: Props) => {
   }
 
   const names = useMemo(() => repos.map((r) => r.repo), [repos])
+
+  // my skills and commands for the dump's `/` menu: read once per set of projects (they change rarely)
+  const [slash, setSlash] = useState<SlashEntry[]>([])
+  const paths = repos.map((r) => r.path).join('\n')
+  useEffect(() => {
+    listSlashEntries(paths ? paths.split('\n') : [])
+      .then(setSlash)
+      .catch((e) => logError('stream', e, 'list skills'))
+  }, [paths])
 
   const onAdd = (text: string, picked: string | null, queue: boolean) =>
     write(() => addStreamItems(parseDump(text, names, picked), queue ? 'queued' : 'idea'), 'add stream items')
@@ -554,7 +609,7 @@ export const Stream = ({ repos }: Props) => {
       </div>
       {/* the dump sits under the board, like a chat box */}
       <div className="mx-[70px] my-[35px] shrink-0">
-        <Dump repos={repos} onAdd={onAdd} />
+        <Dump repos={repos} slash={slash} onAdd={onAdd} />
       </div>
       {open && (
         <StreamPanel
