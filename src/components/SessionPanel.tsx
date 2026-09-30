@@ -4,7 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { cardActions } from '../lib/cardactions'
-import { buildFeed, type FeedEvent, type TimelineSummary } from '../lib/feed'
+import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
 import { approvePr, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
 import { MERGE_METHODS, type MergeOptions, pickMethod } from '../lib/merge'
@@ -324,17 +324,41 @@ export const SessionPanel = ({
   const methodMenuRef = useRef(false)
   methodMenuRef.current = methodMenu
   const mergeBoxRef = useRef<HTMLDivElement>(null)
+  const taskRef = useRef(task)
+  taskRef.current = task
+  const feedSeq = useRef(0) // the latest full build; an older one landing after it is dropped
+
+  // A full build fetches the timeline, so it can land after a report was linked meanwhile: its reports
+  // are re-read once it's back, from the card as it is by then, and a superseded build is thrown away.
+  const loadFeed = async () => {
+    const seq = ++feedSeq.current
+    const r = await buildFeed(task, me, myName)
+    const feed = mergeReports(r.feed, await reportEvents(taskRef.current, me))
+    if (seq !== feedSeq.current) return
+    setFeed(feed)
+    onRefresh?.(r.summary) // patch this card from the timeline we just fetched
+  }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild feed when switching task
   useEffect(() => {
     setFeed(null)
     setReport(null)
     scrollRef.current?.scrollTo({ top: 0 }) // column-reverse: top 0 is the bottom, newest events
-    buildFeed(task, me, myName).then((r) => {
-      setFeed(r.feed)
-      onRefresh?.(r.summary) // patch this card from the timeline we just fetched
-    })
+    loadFeed()
   }, [task.id])
+
+  // Reports are Lookout's own, so the open card shows one as soon as it's stored: a finished run and
+  // every sync hand in a fresh card, and its reports are merged in without refetching the timeline.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a fresh card object is the trigger
+  useEffect(() => {
+    let live = true
+    reportEvents(task, me).then((reports) => {
+      if (live) setFeed((f) => f && mergeReports(f, reports))
+    })
+    return () => {
+      live = false
+    }
+  }, [task])
 
   // which strategies this repo allows, for the Merge button (an open PR only)
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when switching task
@@ -384,21 +408,16 @@ export const SessionPanel = ({
     else if (el.scrollTop !== autoTopRef.current) followRef.current = false
   }
 
-  // refresh history when a run finishes or a new report gets linked (no manual ↻ needed)
+  // refresh history when a run finishes (no manual ↻ needed); its report comes in with the card above
   const runIdle = run?.status === 'awaiting-input' || run?.status === 'closed'
   const reloadFeed = () => {
     setRefreshing(true)
-    buildFeed(task, me, myName)
-      .then((r) => {
-        setFeed(r.feed)
-        onRefresh?.(r.summary)
-      })
-      .finally(() => setRefreshing(false))
+    loadFeed().finally(() => setRefreshing(false))
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh triggers only
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh trigger only
   useEffect(() => {
     if (runIdle) reloadFeed()
-  }, [runIdle, task.reviewFiles.length])
+  }, [runIdle])
 
   const openReport = async (path: string) => {
     const title = path.split('/').at(-1) ?? path

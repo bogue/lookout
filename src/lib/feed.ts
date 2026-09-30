@@ -120,6 +120,47 @@ const deriveSummary = (events: GhTimelineEvent[]): TimelineSummary => {
   }
 }
 
+// The reports Lookout keeps itself: report files linked to the card, and reviews it captured for the
+// flows that export none. A branch that does export one never has its reviews captured (sync.ts),
+// so a card cannot show the same review twice. Local reads only — cheap enough to redo whenever the
+// card changes, which is how an open panel picks up a report without refetching the timeline.
+export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEvent[]> => {
+  const events: FeedEvent[] = []
+  for (const f of task.reviewFiles) {
+    const ts = reviewFileTs(f)
+    if (ts)
+      events.push({
+        ts,
+        icon: '📄',
+        ...lookout(me),
+        text: 'Review done',
+        filePath: f,
+      })
+  }
+  const captured = await capturedReviewsForTask(task.id).catch((e) => {
+    logError('feed', e, `captured reviews for ${task.id}`)
+    return []
+  })
+  for (const c of captured)
+    events.push({
+      ts: c.createdAt,
+      icon: c.kind === 'followup' ? '📋' : '📄', // a follow-up is a checklist of addressed comments
+      ...lookout(me),
+      text: c.kind === 'followup' ? 'Follow-up done' : 'Review done',
+      body: c.body ?? undefined,
+      fromSession: c.sessionId ?? undefined,
+      filePath: c.filePath ?? undefined,
+    })
+  return events
+}
+
+const isReport = (e: FeedEvent) => e.actor === 'Lookout' && !!(e.filePath || e.body)
+
+// Swap a built feed's reports for a fresh read of them: what's stored now is the whole truth, so a
+// report is added, kept or dropped as the store says, and re-quoted against the feed's sessions.
+export const mergeReports = (feed: FeedEvent[], reports: FeedEvent[]): FeedEvent[] =>
+  linkReports([...feed.filter((e) => !isReport(e)), ...reports].sort((a, b) => a.ts.localeCompare(b.ts)))
+
 export const buildFeed = async (
   task: ReviewTask,
   me: string,
@@ -157,34 +198,7 @@ export const buildFeed = async (
         })
   }
 
-  for (const f of task.reviewFiles) {
-    const ts = reviewFileTs(f)
-    if (ts)
-      events.push({
-        ts,
-        icon: '📄',
-        ...lookout(me),
-        text: 'Review done',
-        filePath: f,
-      })
-  }
-
-  // Reviews Lookout recovered itself, for the flows that export no file. A branch that does export
-  // one never has its reviews captured (sync.ts), so a card cannot show the same review twice.
-  const captured = await capturedReviewsForTask(task.id).catch((e) => {
-    logError('feed', e, `captured reviews for ${task.id}`)
-    return []
-  })
-  for (const c of captured)
-    events.push({
-      ts: c.createdAt,
-      icon: c.kind === 'followup' ? '📋' : '📄', // a follow-up is a checklist of addressed comments
-      ...lookout(me),
-      text: c.kind === 'followup' ? 'Follow-up done' : 'Review done',
-      body: c.body ?? undefined,
-      fromSession: c.sessionId ?? undefined,
-      filePath: c.filePath ?? undefined,
-    })
+  events.push(...(await reportEvents(task, me)))
 
   // an empty timeline here is indistinguishable on screen from a PR with no activity, so say which
   // one it was — the gh error itself is already logged by gh.ts
