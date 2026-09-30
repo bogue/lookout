@@ -85,6 +85,7 @@ const myPr = (over: Partial<MyPr> = {}): MyPr => ({
   ciChecks: null,
   conflicts: false,
   approved: false,
+  activityCount: null,
   doneAt: null,
   snoozed: false,
   ...over,

@@ -46,7 +46,7 @@ import {
 import type { TimelineSummary } from './lib/feed'
 import { resumeInGhostty } from './lib/ghostty'
 import { logError, logWarn, setLogEnabled } from './lib/log'
-import { syncMyPrs } from './lib/myprs'
+import { snoozeMyPr, syncMyPrs } from './lib/myprs'
 import { onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
@@ -271,7 +271,9 @@ const App = () => {
   // one card's snooze, on whichever board it lives
   const snoozeCard = async (id: string, board: ButtonBoard, snoozed: boolean) => {
     if (board === 'pr') {
-      await setMyPrSnoozed(id, snoozed)
+      const pr = myPrs.find((p) => p.id === id)
+      if (snoozed && pr) await snoozeMyPr(pr, config.githubUser)
+      else await setMyPrSnoozed(id, snoozed)
       await reloadMyPrs()
     } else {
       await setSnoozed(id, snoozed)
@@ -477,12 +479,15 @@ const App = () => {
     const prev = myPrs.find((p) => p.id === id)
     if (!prev) return
     const state = s.prState ?? prev.state
-    const derivedColumn = classifyColumn({ state, isDraft: prev.isDraft, humanReview: s.humanReview })
+    // a snoozed card keeps the verdicts the last sync stored: the timeline can't see a pending
+    // re-review request, so its verdict can differ from the list call's and wake the card next sync
+    const { humanReview, botReview } = prev.snoozed ? prev : s
+    const derivedColumn = classifyColumn({ state, isDraft: prev.isDraft, humanReview })
     const next: MyPr = {
       ...prev,
       state,
-      humanReview: s.humanReview,
-      botReview: s.botReview,
+      humanReview,
+      botReview,
       derivedColumn,
       column: resolveColumn(prev.column, prev.derivedColumn, derivedColumn),
       doneAt: state === 'open' ? null : (prev.doneAt ?? new Date().toISOString()),

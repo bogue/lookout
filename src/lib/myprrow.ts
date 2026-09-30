@@ -27,6 +27,7 @@ export type MyPrRow = {
   ci_total?: number | null
   conflicts?: number // migration 018
   approved?: number // migration 019
+  activity_count?: number | null // migration 020
 }
 
 export const rowToMyPr = (r: MyPrRow): MyPr => ({
@@ -51,6 +52,7 @@ export const rowToMyPr = (r: MyPrRow): MyPr => ({
   ciChecks: ciChecksOf(r.ci_failed, r.ci_total),
   conflicts: r.conflicts === 1,
   approved: r.approved === 1,
+  activityCount: r.activity_count ?? null,
 })
 
 // both counts, or none: a half-written pair is as good as not counted

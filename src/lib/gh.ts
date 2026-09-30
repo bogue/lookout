@@ -248,6 +248,32 @@ export type GhMyPr = {
   mergeable?: string // MERGEABLE | CONFLICTING | UNKNOWN
 }
 
+// gh's --json flattens every review and comment author to {login}, dropping GitHub's Bot type: a Cursor
+// review arrives as "cursor", which isBot can't tell from a person (the REST timeline the feed reads
+// says "cursor[bot]", so the two disagreed on every verdict). GraphQL still carries the type, so ask it
+// about the authors on these PRs — one call per repo, all PRs aliased into it. login -> is a bot.
+export const fetchAuthorKinds = async (repo: string, prNumbers: number[]): Promise<Map<string, boolean>> => {
+  const kinds = new Map<string, boolean>()
+  if (!prNumbers.length) return kinds
+  const [owner, name] = repo.split('/')
+  const nodes = 'nodes { author { __typename login } }'
+  const prs = prNumbers
+    .map((n) => `p${n}: pullRequest(number: ${n}) { reviews(last: 100) { ${nodes} } comments(last: 100) { ${nodes} } }`)
+    .join(' ')
+  const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${prs} } }`
+  const out = JSON.parse(
+    await gh(['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`]),
+  )
+  type Node = { author: { __typename: string; login: string } | null }
+  type Pr = { reviews?: { nodes: Node[] }; comments?: { nodes: Node[] } } | null
+  for (const pr of Object.values((out.data?.repository ?? {}) as Record<string, Pr>)) {
+    for (const n of [...(pr?.reviews?.nodes ?? []), ...(pr?.comments?.nodes ?? [])]) {
+      if (n.author) kinds.set(n.author.login, n.author.__typename === 'Bot')
+    }
+  }
+  return kinds
+}
+
 const MY_PR_FIELDS =
   'number,title,url,headRefName,createdAt,isDraft,state,mergedAt,closedAt,latestReviews,reviewRequests,statusCheckRollup,mergeable'
 
@@ -268,6 +294,10 @@ const listMyPrsIn = async (repo: string, me: string, state: string, limit: numbe
       MY_PR_FIELDS,
     ]),
   )
+
+// One of my PRs, in the list call's shape: what a snooze takes as its baseline (see snoozeMyPr)
+export const fetchMyPr = async (repo: string, prNumber: number): Promise<GhMyPr> =>
+  JSON.parse(await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', MY_PR_FIELDS]))
 
 // Open and recently-closed PRs, asked for separately on purpose. A single `--state all --limit 50`
 // is newest-first, so in a busy repo merge history fills the window and pushes long-lived open PRs
