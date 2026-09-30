@@ -552,8 +552,11 @@ export const SessionPanel = ({
                         actions={cardActions({ snoozed: task.snoozed, hasSession: !!sessionId, isPr, running })}
                         onSelect={(id) => {
                           setMoreOpen(false)
-                          if (id === 'snooze') onSnooze(!task.snoozed)
-                          else if (id === 'resume' && sessionId) resumeSession(sessionId)
+                          if (id === 'snooze') {
+                            onSnooze(!task.snoozed)
+                            // snoozing hides the card, so leave the panel; unsnoozing keeps it open
+                            if (!task.snoozed) close()
+                          } else if (id === 'resume' && sessionId) resumeSession(sessionId)
                           else if (id === 'open-browser') openUrl(task.prUrl)
                           else if (id === 'remove') {
                             onStageChange('discovered')
