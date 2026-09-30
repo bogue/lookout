@@ -207,3 +207,32 @@ describe('020_my_pr_activity', () => {
     expect(pr).toEqual({ activity_count: null })
   })
 })
+
+describe('022_stream', () => {
+  it('creates the stream tables, an item defaulting to unranked with no events', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'lookout-migrate-')), 'lookout.db')
+    const h = new DatabaseSync(path)
+    applyThrough(h, 21)
+    apply(h, '022_stream.sql')
+    h.prepare(
+      `INSERT INTO stream_items (id, repo, title, status, created_at, updated_at)
+       VALUES ('i1', 'owner/repo', 'implement card 1', 'idea', '2026-09-30T00:00:00Z', '2026-09-30T00:00:00Z')`,
+    ).run()
+    h.prepare(
+      `INSERT INTO stream_events (item_id, ts, actor, kind) VALUES ('i1', '2026-09-30T00:00:00Z', 'me', 'created')`,
+    ).run()
+    const row = h.prepare('SELECT sort_order, steps, session_ids, created_by FROM stream_items').get()
+    const events = h.prepare('SELECT id, actor, kind FROM stream_events').all()
+    h.close()
+    expect(row).toEqual({ sort_order: null, steps: '[]', session_ids: '[]', created_by: 'me' })
+    expect(events).toEqual([{ id: 1, actor: 'me', kind: 'created' }])
+  })
+
+  it('is safe to replay', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'lookout-migrate-')), 'lookout.db')
+    const h = new DatabaseSync(path)
+    applyThrough(h, 22)
+    expect(() => apply(h, '022_stream.sql')).not.toThrow()
+    h.close()
+  })
+})

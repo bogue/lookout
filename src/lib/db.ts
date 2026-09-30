@@ -1,8 +1,22 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Alert, AlertKind, CapturedReview, CiChecks, MyPr, PrColumn, ReviewTask, Stage } from '../types'
+import type {
+  Alert,
+  AlertKind,
+  CapturedReview,
+  CiChecks,
+  MyPr,
+  PrColumn,
+  ReviewTask,
+  Stage,
+  StreamEvent,
+  StreamItem,
+  StreamStatus,
+} from '../types'
 import { type AlertScope, inScope } from './alerts'
 import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
+import { columnOf, type DumpItem } from './stream'
+import { rowToStreamEvent, rowToStreamItem, type StreamEventRow, type StreamItemRow } from './streamrow'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
 let db: Database | null = null
@@ -461,4 +475,90 @@ export const clearCapturedReviews = async () => {
 export const pruneCapturedReviews = async (before: string) => {
   const d = await getDb()
   await d.execute('DELETE FROM captured_reviews WHERE created_at < $1', [before])
+}
+
+// ── Stream board (migration 022). An item is my own record: no sync touches these tables. ──
+
+const logStreamEvent = async (d: Database, itemId: string, kind: string, text: string | null, actor = 'me') =>
+  d.execute('INSERT INTO stream_events (item_id, ts, actor, kind, text) VALUES ($1, $2, $3, $4, $5)', [
+    itemId,
+    new Date().toISOString(),
+    actor,
+    kind,
+    text,
+  ])
+
+export const streamItems = async (): Promise<StreamItem[]> => {
+  const d = await getDb()
+  const rows = await d.select<StreamItemRow[]>('SELECT * FROM stream_items ORDER BY created_at')
+  return rows.map(rowToStreamItem)
+}
+
+export const streamEvents = async (itemId: string): Promise<StreamEvent[]> => {
+  const d = await getDb()
+  const rows = await d.select<StreamEventRow[]>('SELECT * FROM stream_events WHERE item_id = $1 ORDER BY id', [itemId])
+  return rows.map(rowToStreamEvent)
+}
+
+// A dump's items, in dump order: created_at is spaced by a millisecond so "oldest first" in Queued
+// keeps the order I typed them in even though they land in the same instant.
+export const addStreamItems = async (repo: string, items: DumpItem[], status: StreamStatus) => {
+  const d = await getDb()
+  const base = Date.now()
+  for (const [i, it] of items.entries()) {
+    const id = crypto.randomUUID()
+    const at = new Date(base + i).toISOString()
+    await d.execute(
+      `INSERT INTO stream_items (id, repo, title, ref_kind, ref, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+      [id, repo, it.title, it.refKind, it.ref, status, at],
+    )
+    await logStreamEvent(d, id, 'created', status === 'queued' ? 'dumped straight into Queued' : null)
+  }
+}
+
+// A status change. Entering another column resets the card's rank to `entryRank` there (stream.ts):
+// on top of Done, unranked elsewhere. The caller re-ranks the whole column right after a drag.
+export const setStreamStatus = async (item: StreamItem, status: StreamStatus, rank: number | null = null) => {
+  if (status === item.status) return
+  const d = await getDb()
+  const sameColumn = columnOf(status) === columnOf(item.status)
+  await d.execute(
+    `UPDATE stream_items SET status = $1, updated_at = $2${sameColumn ? '' : ', sort_order = $4'} WHERE id = $3`,
+    sameColumn ? [status, new Date().toISOString(), item.id] : [status, new Date().toISOString(), item.id, rank],
+  )
+  await logStreamEvent(d, item.id, 'status', `${item.status} → ${status}`)
+}
+
+// A column's full order after a drag (or Move to top/bottom): every card in it gets a rank. One
+// statement, so a failure can't leave the column half re-ranked with old and new ranks mixed.
+export const setStreamOrders = async (orderedIds: string[]) => {
+  if (!orderedIds.length) return
+  const d = await getDb()
+  const cases = orderedIds.map((_, i) => `WHEN $${i + 1} THEN ${(i + 1) * 10}`).join(' ')
+  const ids = orderedIds.map((_, i) => `$${i + 1}`).join(', ')
+  await d.execute(`UPDATE stream_items SET sort_order = CASE id ${cases} END WHERE id IN (${ids})`, orderedIds)
+}
+
+// back to the column's default order, and hand the priority chip back to Haiku
+export const resetStreamPriority = async (id: string) => {
+  const d = await getDb()
+  await d.execute(
+    'UPDATE stream_items SET sort_order = NULL, priority = NULL, priority_reason = NULL, priority_source = NULL WHERE id = $1',
+    [id],
+  )
+  await logStreamEvent(d, id, 'priority', 'reset to the default order')
+}
+
+// updated_at stays: it is when the status last changed (how long it waited on me, when it finished)
+export const editStreamItem = async (id: string, fields: { title: string; body: string | null }) => {
+  const d = await getDb()
+  await d.execute('UPDATE stream_items SET title = $1, body = $2 WHERE id = $3', [fields.title, fields.body, id])
+  await logStreamEvent(d, id, 'edited', null)
+}
+
+export const removeStreamItem = async (id: string) => {
+  const d = await getDb()
+  await d.execute('DELETE FROM stream_events WHERE item_id = $1', [id])
+  await d.execute('DELETE FROM stream_items WHERE id = $1', [id])
 }

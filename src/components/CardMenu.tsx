@@ -49,13 +49,16 @@ const ICONS: Record<CardActionId, ReactNode> = {
 // one action's icon on its own, for a control that lives outside the menu (the PR panel's snooze)
 export const CardActionIcon = ({ id }: { id: CardActionId }) => ICONS[id]
 
-type ListProps = {
-  actions: CardAction[]
-  onSelect: (id: CardActionId) => void
+// Any board's actions fit: the PR boards' CardAction, or the Stream board's own (icon only when known)
+type ListProps<Id extends string = CardActionId> = {
+  actions: (Omit<CardAction, 'id'> & { id: Id })[]
+  onSelect: (id: Id) => void
 }
 
+const ICON_OF: Record<string, ReactNode> = ICONS
+
 // The rows themselves, shared by the panel's ⋯ dropdown and the card popover.
-export const CardMenuList = ({ actions, onSelect }: ListProps) => (
+export const CardMenuList = <Id extends string = CardActionId>({ actions, onSelect }: ListProps<Id>) => (
   <>
     {actions.map((a) => (
       <Tip key={a.id} label={a.title}>
@@ -66,7 +69,7 @@ export const CardMenuList = ({ actions, onSelect }: ListProps) => (
             a.danger ? 'text-red-300 hover:bg-red-600/20' : 'text-deck-200 hover:bg-deck-700'
           }`}
         >
-          {ICONS[a.id]} {a.label}
+          {ICON_OF[a.id]} {a.label}
         </button>
       </Tip>
     ))}
@@ -78,11 +81,11 @@ export const MENU_WIDTH = 240
 // A card's quick-action menu, pinned at a screen point (under the ⋯, or where the right-click
 // landed). Portalled out of the card so it isn't clipped by a scrolling column — but React still
 // bubbles its events through the card, so they stop here instead of opening the panel.
-export const CardMenuPopover = ({
+export const CardMenuPopover = <Id extends string = CardActionId>({
   at,
   onClose,
   ...list
-}: ListProps & { at: { x: number; y: number }; onClose: () => void }) => {
+}: ListProps<Id> & { at: { x: number; y: number }; onClose: () => void }) => {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const outside = (e: MouseEvent) => {

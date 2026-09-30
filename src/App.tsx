@@ -678,7 +678,7 @@ const App = () => {
             menuFor={(pr) => cardMenu(myPrToTask(pr), 'pr')}
           />
         )}
-        {view === 'stream' && <Stream />}
+        {view === 'stream' && <Stream repos={config.repos} />}
         {view === 'discovery' && (
           <Discovery
             tasks={tasks}
