@@ -12,7 +12,7 @@ type Props = {
   me: string
   runs: Run[]
   alertedIds: Set<string> // PRs with an unread notification (same set the bell shows)
-  onOpen: (pr: MyPr) => void
+  onOpen: (pr: MyPr, checks?: boolean) => void // checks: unfold the failing CI checks
   onDismissNew: (pr: MyPr) => void // the 💬 new tag: mark the PR's unread notifications read
   onReorder: (pr: MyPr, column: PrColumn, orderedIds: string[]) => void
   menuFor: (pr: MyPr) => CardMenu // quick actions: hover ⋯ and right-click
@@ -30,9 +30,9 @@ const ReviewTag = ({ flavor }: { flavor: ReviewFlavor }) =>
     <span className="rounded bg-amber-500/20 px-1 py-0.5 text-amber-300">changes</span>
   ) : null
 
-const CiTag = ({ ci, checks }: { ci: CiState; checks: CiChecks }) => {
+const CiTag = ({ ci, checks, onOpen }: { ci: CiState; checks: CiChecks; onOpen: () => void }) => {
   if (ci === 'pass') return <span className="rounded bg-grass-500/20 px-1 py-0.5 text-grass-300">✓ CI</span>
-  if (ci === 'fail') return <CiFailBadge checks={checks} />
+  if (ci === 'fail') return <CiFailBadge checks={checks} onOpen={onOpen} />
   if (ci === 'neutral') return <CiNeutralBadge />
   if (ci === 'pending') return <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">CI …</span>
   return null
@@ -54,7 +54,7 @@ const PrCard = ({
   me: string
   run: Run | undefined
   alerted: boolean
-  onOpen: (pr: MyPr) => void
+  onOpen: (pr: MyPr, checks?: boolean) => void
   onDismissNew: (pr: MyPr) => void
   onDragStart: () => void
   onDragEnd: () => void
@@ -105,7 +105,7 @@ const PrCard = ({
         )}
         {pr.isDraft && <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">✎ Draft</span>}
         <ReviewTag flavor={pr.humanReview} />
-        <CiTag ci={pr.ciState} checks={pr.ciChecks} />
+        <CiTag ci={pr.ciState} checks={pr.ciChecks} onOpen={() => onOpen(pr, true)} />
         {pr.ciState === null && pr.conflicts && <ConflictsBadge />}
       </>
     )}

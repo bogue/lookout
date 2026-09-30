@@ -30,6 +30,57 @@ export const ciChecks = (checks: Check[]): CiChecks => {
   return { failed: real.filter((c) => isFailure(checkState(c))).length, total: real.length }
 }
 
+// One check as the card panel lists it, GitHub's "N failing, M successful checks" box
+export type CheckItem = {
+  name: string
+  state: 'fail' | 'pending' | 'pass' | 'skipped'
+  url: string | null
+  seconds: number | null // run time, once it finished
+}
+
+// the raw statusCheckRollup entry: a CheckRun (Actions, apps) or a legacy StatusContext (Jenkins…)
+type RawCheck = Check & {
+  name?: string
+  workflowName?: string
+  context?: string
+  detailsUrl?: string
+  targetUrl?: string
+  startedAt?: string
+  completedAt?: string
+}
+
+const itemState = (c: Check): CheckItem['state'] => {
+  const s = checkState(c)
+  if (isFailure(s)) return 'fail'
+  if (['NEUTRAL', 'SKIPPED'].includes(s)) return 'skipped'
+  if (s === '' || s === 'PENDING' || s === 'IN_PROGRESS' || s === 'QUEUED' || s === 'EXPECTED') return 'pending'
+  return 'pass'
+}
+
+const ORDER: Record<CheckItem['state'], number> = { fail: 0, pending: 1, pass: 2, skipped: 3 }
+
+// Every check, failing first, named like GitHub does ("Workflow / job")
+export const checkList = (checks: RawCheck[]): CheckItem[] =>
+  checks
+    .map((c) => {
+      const start = c.startedAt ? Date.parse(c.startedAt) : Number.NaN
+      const end = c.completedAt ? Date.parse(c.completedAt) : Number.NaN
+      return {
+        name: c.context ?? [c.workflowName, c.name].filter(Boolean).join(' / '),
+        state: itemState(c),
+        url: c.detailsUrl || c.targetUrl || null,
+        seconds: end >= start ? Math.round((end - start) / 1000) : null,
+      }
+    })
+    .sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name))
+
+// "9s", "4m", "3h 2m": GitHub's "Successful in 4m"
+export const checkDuration = (seconds: number): string => {
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
 // GitHub's `mergeable`: CONFLICTING is the only answer that means "fix the branch first" (UNKNOWN is
 // GitHub still computing it, not a conflict)
 export const hasConflicts = (mergeable?: string | null): boolean => mergeable === 'CONFLICTING'

@@ -11,7 +11,7 @@ type Props = {
   tasks: ReviewTask[]
   runs: Run[]
   alertedIds: Set<string> // cards with an unread notification (same set the bell shows)
-  onOpenSession: (t: ReviewTask) => void
+  onOpenSession: (t: ReviewTask, checks?: boolean) => void // checks: unfold the failing CI checks
   onSeen: (t: ReviewTask) => void
   onReorder: (t: ReviewTask, stage: Stage, orderedIds: string[]) => void
   menuFor: (t: ReviewTask) => CardMenu // quick actions: hover ⋯ and right-click
@@ -36,7 +36,7 @@ type CardProps = {
   t: ReviewTask
   run: Run | undefined
   alerted: boolean
-  onOpen: () => void
+  onOpen: (checks?: boolean) => void
   onSeen: () => void
   onDragStart: () => void
   onDragEnd: () => void
@@ -50,7 +50,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
     author={t.prAuthor}
     repo={t.repo}
     prNumber={t.prNumber}
-    onClick={onOpen}
+    onClick={() => onOpen()}
     draggable
     onDragStart={(e) => {
       // WebKit requires setData for the drag to actually start
@@ -69,6 +69,10 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
       >
         {t.prState === 'open' && t.approved ? '✓ approved' : t.prState}
       </span>
+    )}
+    {/* a red build stays visible in Done too, while the PR is still open */}
+    {t.stage === 'done' && t.prState === 'open' && t.ciState === 'fail' && (
+      <CiFailBadge checks={t.ciChecks} onOpen={() => onOpen(true)} />
     )}
     {t.stage !== 'done' && (
       <>
@@ -93,11 +97,16 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
             💬 new
           </button>
         )}
-        {t.ciState === 'pass' && <span className="rounded bg-grass-500/20 px-1 py-0.5 text-grass-300">✓ CI</span>}
-        {t.ciState === 'fail' && <CiFailBadge checks={t.ciChecks} />}
-        {t.ciState === 'pending' && <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">CI …</span>}
-        {t.ciState === 'neutral' && <CiNeutralBadge />}
-        {t.ciState === null && t.conflicts && <ConflictsBadge />}
+        {/* merged/closed: the build no longer matters */}
+        {t.prState === 'open' && (
+          <>
+            {t.ciState === 'pass' && <span className="rounded bg-grass-500/20 px-1 py-0.5 text-grass-300">✓ CI</span>}
+            {t.ciState === 'fail' && <CiFailBadge checks={t.ciChecks} onOpen={() => onOpen(true)} />}
+            {t.ciState === 'pending' && <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">CI …</span>}
+            {t.ciState === 'neutral' && <CiNeutralBadge />}
+            {t.ciState === null && t.conflicts && <ConflictsBadge />}
+          </>
+        )}
       </>
     )}
   </CardFrame>
@@ -247,7 +256,7 @@ export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorde
                       t={t}
                       run={runByTask.get(t.id)}
                       alerted={alertedIds.has(t.id)}
-                      onOpen={() => onOpenSession(t)}
+                      onOpen={(checks) => onOpenSession(t, checks)}
                       onSeen={() => onSeen(t)}
                       menu={menuFor(t)}
                       onDragStart={() => setDragging(t)}

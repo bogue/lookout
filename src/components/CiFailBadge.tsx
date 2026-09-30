@@ -1,14 +1,19 @@
 import type { CiChecks } from '../types'
 
 // A red build, with how much of it is red: "✗ CI 4/7" (failed / all checks). Bare ✗ until a sync
-// has counted the checks.
-export const CiFailBadge = ({ checks }: { checks: CiChecks }) => (
-  <span
-    className="rounded bg-red-500/20 px-1 py-0.5 text-red-300"
-    title={checks ? `${checks.failed} of ${checks.total} checks failed` : 'CI failed'}
+// has counted the checks. Clicking it opens the card with the failing checks unfolded.
+export const CiFailBadge = ({ checks, onOpen }: { checks: CiChecks; onOpen?: () => void }) => (
+  <button
+    type="button"
+    onClick={(e) => {
+      e.stopPropagation()
+      onOpen?.()
+    }}
+    className="cursor-pointer rounded bg-red-500/20 px-1 py-0.5 text-red-300 hover:bg-red-500/40"
+    title={`${checks ? `${checks.failed} of ${checks.total} checks failed` : 'CI failed'} — click to see them`}
   >
     ✗ CI{checks && ` ${checks.failed}/${checks.total}`}
-  </span>
+  </button>
 )
 
 // Checks exist but none really ran: all neutral (a bot with nothing to say) or skipped

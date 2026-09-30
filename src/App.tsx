@@ -119,6 +119,7 @@ const App = () => {
   const [error, setError] = useState<string | null>(null)
   const [showIgnored, setShowIgnored] = useState(false)
   const [panelTaskId, setPanelTaskId] = useState<string | null>(null)
+  const [panelChecksFor, setPanelChecksFor] = useState<string | null>(null) // card opened from its CI badge: failing checks unfolded
   const [alerts, setAlerts] = useState<Alert[]>([])
 
   const runs = useSyncExternalStore(subscribeRuns, getRuns)
@@ -659,8 +660,9 @@ const App = () => {
             me={config.githubUser}
             runs={runs}
             alertedIds={alertedIds}
-            onOpen={async (pr) => {
+            onOpen={async (pr, checks) => {
               setPanelTaskId(pr.id)
+              setPanelChecksFor(checks ? pr.id : null)
               await markCardRead(pr.id)
             }}
             onDismissNew={(pr) => markCardRead(pr.id)}
@@ -693,8 +695,9 @@ const App = () => {
               await setOrders(orderedIds)
               await reload()
             }}
-            onOpenSession={async (t) => {
+            onOpenSession={async (t, checks) => {
               setPanelTaskId(t.id)
+              setPanelChecksFor(checks ? t.id : null)
               await markCardRead(t.id)
               if (t.hasNewActivity) {
                 await clearNewActivity(t.id) // clicking a card clears its "new" (same as the 💬 new button)
@@ -778,7 +781,11 @@ const App = () => {
           // the panel is shared: a card from the Pull Requests board snoozes its own row
           onSnooze={(snoozed) => snoozeCard(panelTask.id, panelIsPr ? 'pr' : 'review', snoozed)}
           onKill={() => killRun(panelTask.id)}
-          onClose={() => setPanelTaskId(null)}
+          onClose={() => {
+            setPanelTaskId(null)
+            setPanelChecksFor(null)
+          }}
+          expandChecks={panelChecksFor === panelTask.id}
           onRefresh={(summary) => {
             if (panelIsPr) refreshMyPrFromTimeline(panelTask.id, summary)
             else refreshTaskFromTimeline(panelTask.id, summary.prState)

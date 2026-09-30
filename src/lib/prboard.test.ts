@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { GhMyPr } from './gh'
-import { ciChecks, hasApproval, isBoardable, isBot, reviewFlavor, rollupToCiState, toMyPr } from './prboard'
+import {
+  checkDuration,
+  checkList,
+  ciChecks,
+  hasApproval,
+  isBoardable,
+  isBot,
+  reviewFlavor,
+  rollupToCiState,
+  toMyPr,
+} from './prboard'
 
 const REPO = 'owner/repo'
 
@@ -262,5 +272,47 @@ describe('toMyPr — merge conflicts', () => {
   it('does not flag one that merges, or one GitHub has not worked out yet', () => {
     expect(toMyPr(raw({ mergeable: 'MERGEABLE' }), REPO, null).conflicts).toBe(false)
     expect(toMyPr(raw({ mergeable: 'UNKNOWN' }), REPO, null).conflicts).toBe(false)
+  })
+})
+
+describe('checkList', () => {
+  const run = (o: Record<string, unknown>) => ({ status: 'COMPLETED', ...o })
+
+  it('names a check run after its workflow and job, a status context after its context', () => {
+    const list = checkList([
+      run({ name: 'lint', workflowName: 'PR checks', conclusion: 'SUCCESS', detailsUrl: 'https://ci/1' }),
+      { context: 'jenkins/pr-head', state: 'FAILURE', targetUrl: 'https://ci/2' },
+    ])
+    expect(list.map((c) => [c.name, c.state, c.url])).toEqual([
+      ['jenkins/pr-head', 'fail', 'https://ci/2'],
+      ['PR checks / lint', 'pass', 'https://ci/1'],
+    ])
+  })
+
+  it('sorts failing, then pending, then passing, then skipped', () => {
+    const list = checkList([
+      run({ name: 'a', conclusion: 'SKIPPED' }),
+      run({ name: 'b', conclusion: 'SUCCESS' }),
+      run({ name: 'c', status: 'IN_PROGRESS' }),
+      run({ name: 'd', conclusion: 'ERROR' }),
+      run({ name: 'e', conclusion: 'NEUTRAL' }),
+    ])
+    expect(list.map((c) => `${c.name}:${c.state}`)).toEqual(['d:fail', 'c:pending', 'b:pass', 'a:skipped', 'e:skipped'])
+  })
+
+  it('keeps the run duration when both ends are known', () => {
+    const [c] = checkList([
+      run({ name: 'x', conclusion: 'SUCCESS', startedAt: '2026-07-01T00:00:00Z', completedAt: '2026-07-01T00:04:10Z' }),
+    ])
+    expect(c.seconds).toBe(250)
+    expect(checkList([run({ name: 'y', status: 'QUEUED' })])[0].seconds).toBeNull()
+  })
+})
+
+describe('checkDuration', () => {
+  it('reads like GitHub: seconds, minutes, hours', () => {
+    expect(checkDuration(9)).toBe('9s')
+    expect(checkDuration(250)).toBe('4m')
+    expect(checkDuration(3 * 3600 + 120)).toBe('3h 2m')
   })
 })

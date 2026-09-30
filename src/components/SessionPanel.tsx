@@ -5,9 +5,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { cardActions } from '../lib/cardactions'
 import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
-import { approvePr, fetchMergeOptions, mergePr } from '../lib/gh'
+import { approvePr, fetchChecks, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
 import { MERGE_METHODS, type MergeOptions, pickMethod } from '../lib/merge'
+import type { CheckItem } from '../lib/prboard'
 import { openPrWindow } from '../lib/prwindow'
 import type { Run, RunLine } from '../lib/runs'
 import { sessionCwd } from '../lib/sessions'
@@ -17,6 +18,7 @@ import type { ActionButton, MergeMethod, MergePreference, ReviewTask, Stage } fr
 import { ActionIcon } from './ActionIcon'
 import { BackButton } from './BackButton'
 import { CardMenuList } from './CardMenu'
+import { ChecksBox } from './ChecksBox'
 import { CloseButton } from './CloseButton'
 import { type Confirm, ConfirmDialog } from './ConfirmDialog'
 import { Markdown } from './Markdown'
@@ -42,6 +44,7 @@ type Props = {
   onClose: () => void
   // fired on open with the card summary derived from the freshly-fetched timeline (per-card refresh)
   onRefresh?: (summary: TimelineSummary) => void
+  expandChecks?: boolean // opened from the card's CI badge: unfold the failing checks
 }
 
 type ReplyBoxProps = {
@@ -297,6 +300,7 @@ export const SessionPanel = ({
   onCancel,
   onClose,
   onRefresh,
+  expandChecks = false,
 }: Props) => {
   const isPr = variant === 'pr'
   const [input, setInput] = useState('')
@@ -313,6 +317,7 @@ export const SessionPanel = ({
   const [feed, setFeed] = useState<FeedEvent[] | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [report, setReport] = useState<{ title: string; content: string } | null>(null)
+  const [checks, setChecks] = useState<CheckItem[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const runRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true) // terminal tails the output until you scroll away from the bottom
@@ -359,6 +364,20 @@ export const SessionPanel = ({
       live = false
     }
   }, [task])
+
+  // the per-check list behind a red build; refetched when the card's CI verdict moves
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when switching task or CI state
+  useEffect(() => {
+    let live = true
+    setChecks([])
+    if (task.ciState !== 'fail' || task.prState !== 'open') return
+    fetchChecks(task.repo, task.prNumber)
+      .then((c) => live && setChecks(c))
+      .catch(() => null) // logged by gh.ts; no box rather than a broken one
+    return () => {
+      live = false
+    }
+  }, [task.id, task.prState, task.ciState, task.ciChecks?.failed, task.ciChecks?.total])
 
   // which strategies this repo allows, for the Merge button (an open PR only)
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when switching task
@@ -915,6 +934,7 @@ export const SessionPanel = ({
             </div>
           </div>
 
+          <ChecksBox checks={checks} expanded={expandChecks} />
           {showReply && (
             <div className="border-t border-deck-800 p-3">
               <ReplyBox

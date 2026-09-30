@@ -2,7 +2,7 @@ import { Command } from '@tauri-apps/plugin-shell'
 import type { CiChecks, CiState, MergeMethod } from '../types'
 import { errText, logError } from './log'
 import { type GhMergeSettings, type MergeOptions, mergeArgs, parseMergeOptions } from './merge'
-import { ciChecks, hasApproval, hasConflicts, rollupToCiState } from './prboard'
+import { type CheckItem, checkList, ciChecks, hasApproval, hasConflicts, rollupToCiState } from './prboard'
 
 // Every gh failure is logged here rather than at the call sites: most of them swallow the rejection
 // to keep one bad repo (or one unreachable PR) from emptying a board, which used to mean a broken
@@ -230,6 +230,13 @@ export const fetchPrExchange = async (repo: string, prNumber: number, me: string
     commits: out.commits ?? [],
   }
 }
+
+// Every check of the PR's head commit, for the card panel's checks box
+export const fetchChecks = async (repo: string, prNumber: number): Promise<CheckItem[]> =>
+  checkList(
+    JSON.parse(await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'statusCheckRollup']))
+      .statusCheckRollup ?? [],
+  )
 
 // A PR authored by me, as returned by `gh pr list --author @me` (raw shape before classification)
 export type GhMyPr = {
