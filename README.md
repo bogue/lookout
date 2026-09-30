@@ -48,11 +48,16 @@ pnpm install
 pnpm tauri dev
 ```
 
-Requirements:
+`pnpm tauri …` builds the CLI first (`pretauri` → `pnpm build:cli`): `tauri.conf.json` bundles
+`dist-cli/lookout.mjs` as a resource, and the Rust build fails without it.
 
+Requirements — see [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS:
+
+- **Linux** — the webview/tray system libs, e.g. on Debian/Ubuntu:
+  `sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`
 - **Rust** (stable) — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`. Without it
   `pnpm tauri dev` dies at `cargo metadata … No such file or directory (os error 2)`.
-- **Xcode Command Line Tools** — `xcode-select --install`, for the linker `cargo` shells out to.
+- **Xcode Command Line Tools** (macOS) — `xcode-select --install`, for the linker `cargo` shells out to.
 - **`gh`** (authenticated) and the **`claude`** CLI.
 
 pnpm is pinned by the `packageManager` field — `corepack enable` picks up the right version.

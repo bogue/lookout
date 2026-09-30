@@ -12,6 +12,7 @@
     "build:cli": "vite build --config vite.cli.config.ts && chmod +x dist-cli/lookout.mjs",
     "preview": "vite preview",
     "test": "vitest run",
+    "pretauri": "pnpm build:cli",
     "tauri": "tauri",
     "icon": "node scripts/generate-icon.mjs && tauri icon assets/logo.png && rm -rf src-tauri/icons/android src-tauri/icons/ios",
     "banner": "node scripts/generate-banner.mjs",
