@@ -14,7 +14,46 @@ permissions:
   contents: write
 
 jobs:
+  # Creates the release up front so the macOS and Linux builds can run in parallel and only upload
+  # to it (tauri-action finds it by tag). `view ||` keeps a workflow_dispatch re-run from failing.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: create the release
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 && exit 0
+          flags=()
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" --verify-tag --title "Lookout $TAG" "${flags[@]}" --notes-file - <<'EOF'
+          Universal macOS build (Apple Silicon + Intel).
+
+          ```
+          brew tap chartrandf/lookout https://github.com/chartrandf/lookout
+          brew trust --cask chartrandf/lookout/lookout
+          brew install --cask lookout
+          ```
+
+          Homebrew doesn't quarantine casks, so that install has no Gatekeeper
+          prompt. Installing the `.dmg` by hand does — the app is ad-hoc signed
+          but **not notarized**. No Terminal needed:
+
+          1. Open the `.dmg` and drag **Lookout** to Applications.
+          2. Double-click it — the launch is blocked.
+          3. **System Settings → Privacy & Security → Open Anyway**.
+
+          One-time click. Prefer the command line? `xattr -dr
+          com.apple.quarantine /Applications/Lookout.app` does the same.
+
+          **Linux** (x86_64): `.deb` (`sudo apt install ./Lookout_*.deb`) or `.AppImage`
+          (`chmod +x` and run).
+          EOF
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+
   macos:
+    needs: release
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -41,32 +80,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
-          releaseName: Lookout ${{ inputs.tag || github.ref_name }}
-          releaseDraft: false
-          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
           args: --target universal-apple-darwin --bundles app,dmg
-          releaseBody: |
-            Universal macOS build (Apple Silicon + Intel).
-
-            ```
-            brew tap chartrandf/lookout https://github.com/chartrandf/lookout
-            brew trust --cask chartrandf/lookout/lookout
-            brew install --cask lookout
-            ```
-
-            Homebrew doesn't quarantine casks, so that install has no Gatekeeper
-            prompt. Installing the `.dmg` by hand does — the app is ad-hoc signed
-            but **not notarized**. No Terminal needed:
-
-            1. Open the `.dmg` and drag **Lookout** to Applications.
-            2. Double-click it — the launch is blocked.
-            3. **System Settings → Privacy & Security → Open Anyway**.
-
-            One-time click. Prefer the command line? `xattr -dr
-            com.apple.quarantine /Applications/Lookout.app` does the same.
-
-            **Linux** (x86_64): `.deb` (`sudo apt install ./Lookout_*.deb`) or `.AppImage`
-            (`chmod +x` and run).
 
       # The bundle is ad-hoc signed by the bundler (tauri.conf.json > macOS.signingIdentity "-").
       # Verify it deeply — an invalid signature is what makes macOS call an app "damaged", and a
@@ -104,11 +118,10 @@ jobs:
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
 
-  # Runs after macOS so the release (and its body) already exists — tauri-action only uploads the
-  # Linux bundles to it. 22.04 is the oldest runner with webkit2gtk-4.1: an older glibc keeps the
-  # .deb/AppImage runnable on more distros.
+  # 22.04 is the oldest runner with webkit2gtk-4.1: an older glibc keeps the .deb/AppImage
+  # runnable on more distros.
   linux:
-    needs: macos
+    needs: release
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
