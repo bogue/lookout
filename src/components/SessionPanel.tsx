@@ -3,7 +3,7 @@ import { readTextFile } from '@tauri-apps/plugin-fs'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
-import { cardActions } from '../lib/cardactions'
+import { cardActions, snoozeAction } from '../lib/cardactions'
 import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
 import { approvePr, fetchChecks, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
@@ -547,7 +547,7 @@ export const SessionPanel = ({
   const showMerge = task.prState === 'open' && (task.approved || approved) && !!method && !!mergeOpts
 
   // same label + tooltip as the ⋯ menu's row (cardactions.ts), for the PR panel's standalone button
-  const snooze = cardActions({ snoozed: task.snoozed, hasSession: false, isPr, running: false })[0]
+  const snooze = snoozeAction(task.snoozed)
 
   // Ghostty deep link; falls back to copying the resume command when Ghostty is missing
   const resumeSession = async (id: string) => {
