@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cardActions } from './cardactions'
+import { cardActions, snoozeAction } from './cardactions'
 
 const ids = (c: Parameters<typeof cardActions>[0]) => cardActions(c).map((a) => a.id)
 const base = { snoozed: false, hasSession: false, isPr: false, running: false }
@@ -27,5 +27,10 @@ describe('cardActions', () => {
     const snooze = cardActions({ ...base, snoozed: true })[0]
     expect(snooze).toEqual(expect.objectContaining({ id: 'snooze', label: 'Unsnooze' }))
     expect(cardActions(base)[0].label).toBe('Snooze')
+  })
+
+  it('builds the list from the same snooze action the PR panel shows on its own', () => {
+    expect(cardActions(base)[0]).toEqual(snoozeAction(false))
+    expect(cardActions({ ...base, snoozed: true })[0]).toEqual(snoozeAction(true))
   })
 })

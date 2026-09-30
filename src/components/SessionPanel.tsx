@@ -3,7 +3,7 @@ import { readTextFile } from '@tauri-apps/plugin-fs'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
-import { cardActions } from '../lib/cardactions'
+import { cardActions, snoozeAction } from '../lib/cardactions'
 import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
 import { approvePr, fetchChecks, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
@@ -17,7 +17,7 @@ import { messageTime } from '../lib/time'
 import type { ActionButton, MergeMethod, MergePreference, ReviewTask, Stage } from '../types'
 import { ActionIcon } from './ActionIcon'
 import { BackButton } from './BackButton'
-import { CardMenuList } from './CardMenu'
+import { CardActionIcon, CardMenuList } from './CardMenu'
 import { ChecksBox } from './ChecksBox'
 import { CloseButton } from './CloseButton'
 import { type Confirm, ConfirmDialog } from './ConfirmDialog'
@@ -546,6 +546,9 @@ export const SessionPanel = ({
   // the next sync records it
   const showMerge = task.prState === 'open' && (task.approved || approved) && !!method && !!mergeOpts
 
+  // same label + tooltip as the ⋯ menu's row (cardactions.ts), for the PR panel's standalone button
+  const snooze = snoozeAction(task.snoozed)
+
   // Ghostty deep link; falls back to copying the resume command when Ghostty is missing
   const resumeSession = async (id: string) => {
     if (!task.repoPath) return
@@ -580,36 +583,59 @@ export const SessionPanel = ({
                     ))}
                   </select>
                 )}
-                <div className="relative">
+                {isPr ? (
+                  // my own PR's ⋯ was only Snooze + Open in browser (the header link already opens it;
+                  // a run's stop and a session's resume live in the feed), so snooze gets its own button
                   <button
                     type="button"
-                    onClick={() => setMoreOpen((s) => !s)}
-                    title="More options"
-                    className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-deck-600 text-sm text-deck-300 hover:bg-deck-700"
+                    onClick={() => {
+                      onSnooze(!task.snoozed)
+                      // snoozing hides the card, so leave the panel; unsnoozing keeps it open
+                      if (!task.snoozed) close()
+                    }}
+                    title={`${snooze.label}: ${snooze.title}`}
+                    aria-label={snooze.label}
+                    aria-pressed={task.snoozed}
+                    className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border text-sm ${
+                      task.snoozed
+                        ? 'border-grass-600 bg-grass-600/20 text-grass-300'
+                        : 'border-deck-600 text-deck-300 hover:bg-deck-800 hover:text-deck-100'
+                    }`}
                   >
-                    ⋯
+                    <CardActionIcon id="snooze" />
                   </button>
-                  {moreOpen && (
-                    <div className="absolute right-0 top-full z-40 mt-1 flex w-60 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
-                      <CardMenuList
-                        actions={cardActions({ snoozed: task.snoozed, hasSession: !!sessionId, isPr, running })}
-                        onSelect={(id) => {
-                          setMoreOpen(false)
-                          if (id === 'snooze') {
-                            onSnooze(!task.snoozed)
-                            // snoozing hides the card, so leave the panel; unsnoozing keeps it open
-                            if (!task.snoozed) close()
-                          } else if (id === 'resume' && sessionId) resumeSession(sessionId)
-                          else if (id === 'open-browser') openUrl(task.prUrl)
-                          else if (id === 'remove') {
-                            onStageChange('discovered')
-                            close()
-                          } else if (id === 'kill') onKill()
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
+                ) : (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setMoreOpen((s) => !s)}
+                      title="More options"
+                      className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-deck-600 text-sm text-deck-300 hover:bg-deck-700"
+                    >
+                      ⋯
+                    </button>
+                    {moreOpen && (
+                      <div className="absolute right-0 top-full z-40 mt-1 flex w-60 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
+                        <CardMenuList
+                          actions={cardActions({ snoozed: task.snoozed, hasSession: !!sessionId, isPr, running })}
+                          onSelect={(id) => {
+                            setMoreOpen(false)
+                            if (id === 'snooze') {
+                              onSnooze(!task.snoozed)
+                              // snoozing hides the card, so leave the panel; unsnoozing keeps it open
+                              if (!task.snoozed) close()
+                            } else if (id === 'resume' && sessionId) resumeSession(sessionId)
+                            else if (id === 'open-browser') openUrl(task.prUrl)
+                            else if (id === 'remove') {
+                              onStageChange('discovered')
+                              close()
+                            } else if (id === 'kill') onKill()
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
                 <CloseButton onClick={close} />
               </div>
             </div>

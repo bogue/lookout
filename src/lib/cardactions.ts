@@ -11,10 +11,14 @@ export type CardActionContext = {
   running: boolean // a run is in flight
 }
 
-export const cardActions = (c: CardActionContext): CardAction[] => [
-  c.snoozed
+// also shown on its own, as the PR panel's snooze button
+export const snoozeAction = (snoozed: boolean): CardAction =>
+  snoozed
     ? { id: 'snooze', label: 'Unsnooze', title: 'Show this card on the board again' }
-    : { id: 'snooze', label: 'Snooze', title: "Hide this card until there's new activity on the PR" },
+    : { id: 'snooze', label: 'Snooze', title: "Hide this card until there's new activity on the PR" }
+
+export const cardActions = (c: CardActionContext): CardAction[] => [
+  snoozeAction(c.snoozed),
   ...(c.hasSession ? [{ id: 'resume', label: 'Resume session in Ghostty' } as const] : []),
   { id: 'open-browser', label: 'Open in browser' },
   // my own PR stays on its board until it merges; only a review card can be dropped
