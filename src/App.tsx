@@ -71,6 +71,7 @@ import {
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
+import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
 import { initTray, setTrayCount, showMainWindow } from './lib/tray'
 import { chatCheckout, pathForBranch } from './lib/worktrees'
@@ -90,20 +91,11 @@ import { Board } from './views/Board'
 import { Discovery } from './views/Discovery'
 import { PullRequests } from './views/PullRequests'
 import { Settings } from './views/Settings'
+import { Stream } from './views/Stream'
 
 const POLL_MS = 10 * 60 * 1000
 // on tab change we do a lightweight sync of just that tab's data, but not more often than this
 const MIN_PARTIAL_MS = 60 * 1000
-
-type View = 'pulls' | 'discovery' | 'board' | 'settings'
-
-// Single source of truth for tab order: shortcuts (⌘1..⌘n) derive from the index
-const TAB_ORDER: { view: View; label: string }[] = [
-  { view: 'pulls', label: 'Pull Requests' },
-  { view: 'board', label: 'Reviews' },
-  { view: 'discovery', label: 'Discovery' },
-  { view: 'settings', label: 'Settings' },
-]
 
 const parseFollowupSummary = (text: string) => {
   const m = text.match(/(\d+)\s*addressed\D*?(\d+)\s*partial\D*?(\d+)\s*pending/i)
@@ -266,10 +258,10 @@ const App = () => {
   // ⌘1..⌘n switch tabs, indexes follow TAB_ORDER
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const idx = Number(e.key) - 1
-      if (e.metaKey && !e.shiftKey && !e.altKey && TAB_ORDER[idx]) {
+      const v = tabForKey(e.key)
+      if (e.metaKey && !e.shiftKey && !e.altKey && v) {
         e.preventDefault()
-        switchView(TAB_ORDER[idx].view)
+        switchView(v)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -622,18 +614,16 @@ const App = () => {
           </Tip>
         </h1>
         {TAB_ORDER.filter((t) => t.view !== 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
-        {/* drag region only fires on the element itself, so the wrapper needs it too:
-            clicks on the search input/buttons inside still behave normally */}
-        <div data-tauri-drag-region className="flex min-w-0 flex-1 justify-center px-4">
-          <GlobalSearch
-            tasks={tasks}
-            onOpen={openCard}
-            onReview={startReview}
-            onWatch={(id) => moveStage(id, 'watching')}
-            onIgnore={(id) => moveStage(id, 'ignored')}
-            onUnignore={(id) => moveStage(id, 'discovered')}
-          />
-        </div>
+        {/* empty space between the tabs and the right-hand icons: still part of the titlebar drag region */}
+        <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        <GlobalSearch
+          tasks={tasks}
+          onOpen={openCard}
+          onReview={startReview}
+          onWatch={(id) => moveStage(id, 'watching')}
+          onIgnore={(id) => moveStage(id, 'ignored')}
+          onUnignore={(id) => moveStage(id, 'discovered')}
+        />
         {TAB_ORDER.filter((t) => t.view === 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
         <NotificationBell
           alerts={alerts}
@@ -670,7 +660,7 @@ const App = () => {
 
       {/* board: columns scroll individually and stop 50px above the bottom (sync pill stays clear) */}
       <main
-        className={`flex-1 p-4 ${view === 'board' || view === 'pulls' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
+        className={`flex-1 p-4 ${view === 'board' || view === 'pulls' || view === 'stream' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
       >
         {view === 'pulls' && (
           <PullRequests
@@ -688,6 +678,7 @@ const App = () => {
             menuFor={(pr) => cardMenu(myPrToTask(pr), 'pr')}
           />
         )}
+        {view === 'stream' && <Stream />}
         {view === 'discovery' && (
           <Discovery
             tasks={tasks}
