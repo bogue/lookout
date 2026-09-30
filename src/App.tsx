@@ -616,6 +616,7 @@ const App = () => {
         {TAB_ORDER.filter((t) => t.view !== 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
         {/* empty space between the tabs and the right-hand icons: still part of the titlebar drag region */}
         <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        {TAB_ORDER.filter((t) => t.view === 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
         <GlobalSearch
           tasks={tasks}
           onOpen={openCard}
@@ -624,7 +625,6 @@ const App = () => {
           onIgnore={(id) => moveStage(id, 'ignored')}
           onUnignore={(id) => moveStage(id, 'discovered')}
         />
-        {TAB_ORDER.filter((t) => t.view === 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
         <NotificationBell
           alerts={alerts}
           onOpen={openAlert}
@@ -643,24 +643,27 @@ const App = () => {
         />
       </header>
 
-      {/* status bar: above the board, but under the card side panel (z-20) */}
-      <div className="fixed bottom-2 right-2 z-10 flex items-center gap-2 rounded-md border border-deck-700 bg-deck-900/95 px-2 py-1 text-xs text-deck-500 shadow-lg">
-        {lastSync && <span>synced {lastSync.toLocaleTimeString()}</span>}
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={syncing}
-          className="cursor-pointer rounded bg-deck-800 px-2 py-0.5 text-deck-300 hover:bg-deck-700 disabled:opacity-50"
-        >
-          {syncing ? 'syncing…' : 'sync now'}
-        </button>
-      </div>
+      {/* status bar: above the board, but under the card side panel (z-20). Not on Stream: nothing
+          there comes from the GitHub sync */}
+      {view !== 'stream' && (
+        <div className="fixed bottom-2 right-2 z-10 flex items-center gap-2 rounded-md border border-deck-700 bg-deck-900/95 px-2 py-1 text-xs text-deck-500 shadow-lg">
+          {lastSync && <span>synced {lastSync.toLocaleTimeString()}</span>}
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={syncing}
+            className="cursor-pointer rounded bg-deck-800 px-2 py-0.5 text-deck-300 hover:bg-deck-700 disabled:opacity-50"
+          >
+            {syncing ? 'syncing…' : 'sync now'}
+          </button>
+        </div>
+      )}
 
       {error && <div className="mx-4 mt-3 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-300">{error}</div>}
 
       {/* board: columns scroll individually and stop 50px above the bottom (sync pill stays clear) */}
       <main
-        className={`flex-1 p-4 ${view === 'board' || view === 'pulls' || view === 'stream' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
+        className={`flex-1 p-4 ${view === 'stream' ? 'overflow-hidden' : view === 'board' || view === 'pulls' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
       >
         {view === 'pulls' && (
           <PullRequests

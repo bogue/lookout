@@ -101,7 +101,14 @@ export const GlobalSearch = ({ tasks, onOpen, onReview, onWatch, onIgnore, onUni
         </button>
       </Tip>
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-[550px] max-w-[calc(100vw-2rem)] rounded-md border border-deck-700 bg-deck-900 shadow-xl">
+        // full-screen blur behind the popover, like the notifications panel. It sits inside wrapRef, so the
+        // outside-mousedown listener ignores it: its own click closes.
+        // biome-ignore lint/a11y/noStaticElementInteractions: click-away backdrop
+        // biome-ignore lint/a11y/useKeyWithClickEvents: click-away backdrop; Esc is handled by the input
+        <div onClick={() => setOpen(false)} className="fixed inset-0 z-20 bg-black/30 backdrop-blur-sm" />
+      )}
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-[9px] w-[550px] max-w-[calc(100vw-2rem)] rounded-md border border-deck-700 bg-deck-900 shadow-xl">
           <input
             ref={inputRef}
             type="text"
@@ -109,7 +116,7 @@ export const GlobalSearch = ({ tasks, onOpen, onReview, onWatch, onIgnore, onUni
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && reset()}
             placeholder="Search cards…"
-            className="w-full rounded-t-md border-b border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:outline-none"
+            className="w-full rounded-t-md border-b border-deck-700 bg-deck-800/80 px-4 py-3 text-base text-deck-100 placeholder:text-deck-500 focus:outline-none"
           />
           {q && (
             <div className="max-h-96 overflow-y-auto py-1">
