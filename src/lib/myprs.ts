@@ -2,7 +2,7 @@ import type { Alert, Config, MyPr } from '../types'
 import { MY_PR_ALERT_KINDS, myPrAlerts } from './alerts'
 import { getConfig, setGithubUser } from './config'
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, pruneMyPrRepos, syncAlerts, upsertMyPr } from './db'
-import { fetchLogin, fetchPrExchange, listMyPrs, type PrExchange } from './gh'
+import { fetchBotLogins, fetchLogin, fetchPrExchange, type GhMyPr, listMyPrs, type PrExchange } from './gh'
 import { logError } from './log'
 import { notify } from './notify'
 import { isBot, isBoardable, toMyPr } from './prboard'
@@ -24,10 +24,23 @@ const hasNews = (prev: MyPr, fresh: MyPr): boolean =>
   prev.state !== fresh.state ||
   prev.derivedColumn !== fresh.derivedColumn
 
-// Comments + reviews from people other than me. Bots are left out: a coverage or lint bot posts on
-// every push, which would wake a snoozed card on each commit just like CI did.
+// Bot logins seen so far (see fetchBotLogins). Kept across passes: an account doesn't stop being a bot,
+// and a failed lookup must not turn Cursor back into a person — that flips its verdict and wakes cards.
+const knownBots = new Set<string>()
+
+const botAware = (author: { login?: string; is_bot?: boolean } | null) =>
+  author?.login && knownBots.has(author.login) ? { ...author, is_bot: true } : author
+
+// gh's authors carry no bot flag; set it from knownBots so isBot (prboard.ts) sees what GitHub does
+const markBots = (raw: GhMyPr): GhMyPr => ({
+  ...raw,
+  latestReviews: raw.latestReviews.map((r) => ({ ...r, author: botAware(r.author) as GhMyPr['latestReviews'][number]['author'] })),
+})
+
+// Comments + reviews from people other than me. Bots are left out: Cursor re-reviews and CI bots post
+// on every push, which would wake a snoozed card on each commit just like CI did.
 const humanActivity = (x: PrExchange, me: string): number =>
-  [...x.comments, ...x.reviews].filter((c) => c.author?.login !== me && !isBot(c.author)).length
+  [...x.comments, ...x.reviews].filter((c) => c.author?.login !== me && !isBot(botAware(c.author))).length
 
 // One pass: list the PRs I authored across watched repos and reconcile them into `my_prs`.
 //
@@ -62,9 +75,15 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
       continue
     }
     listed.push(repo)
+    const open = raw.filter((r) => r.state === 'OPEN').map((r) => r.number)
+    for (const b of await fetchBotLogins(repo, open).catch((e) => {
+      logError('myprs', e, `bot lookup ${repo}`) // keep the bots already known
+      return []
+    }))
+      knownBots.add(b)
     const seen: string[] = []
     for (const r of raw) {
-      const fresh = toMyPr(r, repo, path)
+      const fresh = toMyPr(markBots(r), repo, path)
       if (!isBoardable(fresh, today)) continue // merged/closed before today: not this board's business
       const prev = stored.get(fresh.id)
       seen.push(fresh.id)

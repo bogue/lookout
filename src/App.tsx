@@ -477,12 +477,15 @@ const App = () => {
     const prev = myPrs.find((p) => p.id === id)
     if (!prev) return
     const state = s.prState ?? prev.state
-    const derivedColumn = classifyColumn({ state, isDraft: prev.isDraft, humanReview: s.humanReview })
+    // a snoozed card keeps the verdicts the last sync stored: the timeline can't see a pending
+    // re-review request, so its verdict can differ from the list call's and wake the card next sync
+    const { humanReview, botReview } = prev.snoozed ? prev : s
+    const derivedColumn = classifyColumn({ state, isDraft: prev.isDraft, humanReview })
     const next: MyPr = {
       ...prev,
       state,
-      humanReview: s.humanReview,
-      botReview: s.botReview,
+      humanReview,
+      botReview,
       derivedColumn,
       column: resolveColumn(prev.column, prev.derivedColumn, derivedColumn),
       doneAt: state === 'open' ? null : (prev.doneAt ?? new Date().toISOString()),

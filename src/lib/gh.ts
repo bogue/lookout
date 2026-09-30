@@ -248,6 +248,30 @@ export type GhMyPr = {
   mergeable?: string // MERGEABLE | CONFLICTING | UNKNOWN
 }
 
+// gh's --json flattens every review and comment author to {login}, dropping GitHub's Bot type: a Cursor
+// review arrives as "cursor", which isBot can't tell from a person (the REST timeline the feed reads
+// says "cursor[bot]", so the two disagreed on every verdict). GraphQL still carries the type, so ask it
+// which authors on these PRs are bots — one call per repo, all PRs aliased into it.
+export const fetchBotLogins = async (repo: string, prNumbers: number[]): Promise<Set<string>> => {
+  const bots = new Set<string>()
+  if (!prNumbers.length) return bots
+  const [owner, name] = repo.split('/')
+  const nodes = 'nodes { author { __typename login } }'
+  const prs = prNumbers
+    .map((n) => `p${n}: pullRequest(number: ${n}) { reviews(last: 100) { ${nodes} } comments(last: 100) { ${nodes} } }`)
+    .join(' ')
+  const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${prs} } }`
+  const out = JSON.parse(await gh(['api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`]))
+  type Node = { author: { __typename: string; login: string } | null }
+  type Pr = { reviews?: { nodes: Node[] }; comments?: { nodes: Node[] } } | null
+  for (const pr of Object.values((out.data?.repository ?? {}) as Record<string, Pr>)) {
+    for (const n of [...(pr?.reviews?.nodes ?? []), ...(pr?.comments?.nodes ?? [])]) {
+      if (n.author?.__typename === 'Bot') bots.add(n.author.login)
+    }
+  }
+  return bots
+}
+
 const MY_PR_FIELDS =
   'number,title,url,headRefName,createdAt,isDraft,state,mergedAt,closedAt,latestReviews,reviewRequests,statusCheckRollup,mergeable'
 

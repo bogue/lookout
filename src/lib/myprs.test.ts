@@ -12,6 +12,7 @@ vi.mock('./db', () => ({
   upsertMyPr: vi.fn(),
 }))
 vi.mock('./gh', () => ({
+  fetchBotLogins: vi.fn(async () => new Set<string>()),
   fetchLogin: vi.fn(),
   fetchPrExchange: vi.fn(async () => ({ count: 0, ciState: null, reviews: [], comments: [], commits: [] })),
   listMyPrs: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('./notify', () => ({ notify: vi.fn() }))
 vi.mock('./proverrides', () => ({ migrateLegacyPrStore: vi.fn(async () => ({ columns: {}, orders: {} })) }))
 
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, upsertMyPr } from './db'
-import { fetchPrExchange, listMyPrs, type PrExchange } from './gh'
+import { fetchBotLogins, fetchPrExchange, listMyPrs, type PrExchange } from './gh'
 import { syncMyPrs } from './myprs'
 import { migrateLegacyPrStore } from './proverrides'
 
@@ -333,5 +334,45 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
     vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)?.snoozed).toBe(false)
+  })
+})
+
+// gh's --json drops the Bot type from review/comment authors ("cursor", not "cursor[bot]")
+describe('syncMyPrs — bots gh reports as plain logins', () => {
+  it("treats a GraphQL-confirmed bot's review as a bot's, not a person's", async () => {
+    vi.mocked(fetchBotLogins).mockResolvedValueOnce(new Set(['cursor']))
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ latestReviews: [{ author: { login: 'cursor' }, state: 'COMMENTED' }] })])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ humanReview: null, botReview: 'commented', column: 'waiting' })
+  })
+
+  it("doesn't wake a snoozed card when such a bot re-reviews or comments", async () => {
+    vi.mocked(fetchBotLogins).mockResolvedValueOnce(new Set(['sonar']))
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 0 })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'sonar' } }]))
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 0 })
+  })
+
+  it('keeps a bot it already knew when the lookup fails', async () => {
+    vi.mocked(fetchBotLogins).mockResolvedValueOnce(new Set(['linter']))
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    await syncMyPrs(config([REPO]))
+
+    vi.mocked(fetchBotLogins).mockRejectedValueOnce(new Error('graphql'))
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, botReview: 'commented' })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ latestReviews: [{ author: { login: 'linter' }, state: 'COMMENTED' }] })])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, humanReview: null, botReview: 'commented' })
+  })
+
+  it('asks only about open PRs', async () => {
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ number: 1 }),
+      ghPr({ number: 2, state: 'MERGED', mergedAt: new Date().toISOString() }),
+    ])
+    await syncMyPrs(config([REPO]))
+    expect(fetchBotLogins).toHaveBeenCalledWith(REPO, [1])
   })
 })
