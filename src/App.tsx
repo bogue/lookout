@@ -98,7 +98,7 @@ const parseFollowupSummary = (text: string) => {
 }
 
 const App = () => {
-  const [view, setView] = useState<View>('board')
+  const [view, setView] = useState<View>(TAB_ORDER[0].view)
   const [config, setConfig] = useState<Config>({
     githubUser: '',
     githubName: '',
