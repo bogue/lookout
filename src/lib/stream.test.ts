@@ -98,6 +98,9 @@ const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   priority: null,
   priorityReason: null,
   prioritySource: null,
+  branch: null,
+  checkout: null,
+  sessionIds: [],
   createdBy: 'me',
   createdAt: '2026-09-30T10:00:00.000Z',
   updatedAt: '2026-09-30T10:00:00.000Z',
@@ -213,8 +216,26 @@ describe('streamActions', () => {
     expect(actionIds({ status: 'idea' })).toEqual(['queue', 'skip', 'top', 'bottom', 'remove'])
   })
 
-  it('offers pause and back-to-inbox on a queued card', () => {
-    expect(actionIds({ status: 'queued' })).toEqual(['pause', 'to-inbox', 'done', 'skip', 'top', 'bottom', 'remove'])
+  it('offers run now, pause and back-to-inbox on a queued card', () => {
+    expect(actionIds({ status: 'queued' })).toEqual([
+      'run',
+      'pause',
+      'to-inbox',
+      'done',
+      'skip',
+      'top',
+      'bottom',
+      'remove',
+    ])
+  })
+
+  it('offers approve on a card waiting for my review', () => {
+    expect(actionIds({ status: 'needs_review' })).toEqual(['approve', 'skip', 'top', 'bottom', 'remove'])
+  })
+
+  it('offers retry on a failed or interrupted card', () => {
+    expect(actionIds({ status: 'failed' })[0]).toBe('retry')
+    expect(actionIds({ status: 'interrupted' })[0]).toBe('retry')
   })
 
   it('offers resume on a paused card', () => {
@@ -244,6 +265,13 @@ describe('applyStreamAction', () => {
     expect(applyStreamAction('failed', 'done')).toBe('done')
     expect(applyStreamAction('queued', 'skip')).toBe('skipped')
     expect(applyStreamAction('skipped', 'requeue')).toBe('queued')
+  })
+
+  it('approving a result finishes the card', () => expect(applyStreamAction('needs_review', 'approve')).toBe('done'))
+
+  it('leaves run and retry to the runner', () => {
+    expect(applyStreamAction('queued', 'run')).toBeNull()
+    expect(applyStreamAction('failed', 'retry')).toBeNull()
   })
 
   it('leaves the status alone for ordering actions', () => {

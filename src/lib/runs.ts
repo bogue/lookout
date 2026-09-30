@@ -3,12 +3,15 @@ import type { ButtonBoard } from '../types'
 import { REVIEW_TOOLS, spawnClaude } from './claude'
 import { errText, logError, logInfo, logWarn } from './log'
 
+// which board a run belongs to: a PR board's action button, or a Stream item's agent
+export type RunBoard = ButtonBoard | 'stream'
+
 export type RunLine = { kind: 'text' | 'tool' | 'user' | 'error'; text: string }
 
 export type Run = {
   taskId: string
   command: string // the button label that started the run (display only)
-  board: ButtonBoard // routes post-run behavior (review vs my-PR board)
+  board: RunBoard // routes post-run behavior (review vs my-PR board, or a Stream item)
   repoPath: string
   sessionId: string | null
   lines: RunLine[]
@@ -39,6 +42,8 @@ export const getRun = (taskId: string) => runs.get(taskId)
 type Callbacks = {
   onSession?: (taskId: string, sessionId: string) => void
   onResult?: (taskId: string, resultText: string) => void
+  // the process is gone (or never started): the run's final status says how it went
+  onEnd?: (taskId: string, status: Run['status']) => void
 }
 
 const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSessionId?: string) => {
@@ -67,6 +72,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
           run.child = null
           if (run.status === 'running') run.status = e.code === 0 ? 'closed' : 'error'
           if (e.code !== 0) logWarn('run', `${run.taskId}: claude exited with code ${e.code}`)
+          callbacks.onEnd?.(run.taskId, run.status)
         }
         notify()
       },
@@ -79,6 +85,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
     run.status = 'error'
     run.lines.push({ kind: 'error', text: `could not start claude: ${errText(e)}` })
     logError('run', e, `${run.taskId}: spawn claude in ${run.repoPath}`)
+    callbacks.onEnd?.(run.taskId, run.status)
   }
   notify()
 }
@@ -86,7 +93,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
 export const startRun = async (
   taskId: string,
   command: Run['command'],
-  board: ButtonBoard,
+  board: RunBoard,
   prompt: string,
   repoPath: string,
   callbacks: Callbacks = {},
@@ -123,7 +130,7 @@ export const replyRun = async (taskId: string, text: string, callbacks: Callback
 export const resumeRun = async (
   taskId: string,
   command: Run['command'],
-  board: ButtonBoard,
+  board: RunBoard,
   repoPath: string,
   text: string,
   sessionId: string,

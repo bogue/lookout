@@ -101,6 +101,9 @@ export const dropStatus = (from: StreamStatus, to: StreamColumn): StreamStatus |
 
 export type StreamActionId =
   | 'queue'
+  | 'run'
+  | 'approve'
+  | 'retry'
   | 'pause'
   | 'resume'
   | 'to-inbox'
@@ -116,6 +119,9 @@ export type StreamAction = { id: StreamActionId; label: string; title?: string; 
 
 const A: Record<StreamActionId, StreamAction> = {
   queue: { id: 'queue', label: 'Queue', title: 'Move to Queued' },
+  run: { id: 'run', label: 'Run now', title: 'Start an agent on it now, without waiting for Auto-run' },
+  approve: { id: 'approve', label: 'Approve', title: 'The result is good: mark it done' },
+  retry: { id: 'retry', label: 'Retry', title: 'Run it again, in the same session when there is one' },
   pause: { id: 'pause', label: 'Pause', title: 'Keep it queued, but never pick it' },
   resume: { id: 'resume', label: 'Resume', title: 'Pickable again' },
   'to-inbox': { id: 'to-inbox', label: 'Back to Inbox' },
@@ -135,14 +141,14 @@ const A: Record<StreamActionId, StreamAction> = {
 const STATUS_ACTIONS: Record<StreamStatus, StreamActionId[]> = {
   idea: ['queue', 'skip'],
   shaping: ['skip'],
-  queued: ['pause', 'to-inbox', 'done', 'skip'],
+  queued: ['run', 'pause', 'to-inbox', 'done', 'skip'],
   paused: ['resume', 'to-inbox', 'skip'],
   running: [],
   watching: ['skip'],
-  needs_review: ['done', 'skip', 'requeue'],
+  needs_review: ['approve', 'skip'],
   question: ['skip'],
-  failed: ['requeue', 'done', 'skip'],
-  interrupted: ['requeue', 'done', 'skip'],
+  failed: ['retry', 'done', 'skip'],
+  interrupted: ['retry', 'done', 'skip'],
   done: ['requeue'],
   skipped: ['requeue'],
 }
@@ -163,6 +169,7 @@ export const streamActions = (x: StreamItem): StreamAction[] => {
 
 const ACTION_STATUS: Partial<Record<StreamActionId, StreamStatus>> = {
   queue: 'queued',
+  approve: 'done',
   pause: 'paused',
   resume: 'queued',
   'to-inbox': 'idea',

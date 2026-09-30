@@ -1,11 +1,15 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { editStreamItem, streamEvents } from '../lib/db'
+import { resumeInGhostty } from '../lib/ghostty'
 import { logError } from '../lib/log'
+import { getRuns, subscribeRuns } from '../lib/runs'
 import { projectGateTarget, prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
+import { cancelStreamItem, replyStreamItem, streamTaskId } from '../lib/streamrunner'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
 import { CloseButton } from './CloseButton'
+import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
 import { SidePanel } from './SidePanel'
 
@@ -40,7 +44,13 @@ const eventText = (e: StreamEvent) =>
       ? `Status ${e.text ?? ''}`
       : e.kind === 'edited'
         ? 'Edited'
-        : `${e.kind}${e.text ? ` — ${e.text}` : ''}`
+        : e.kind === 'started'
+          ? `Agent started${e.text ? ` — ${e.text}` : ''}`
+          : e.kind === 'failed'
+            ? `Failed — ${e.text ?? ''}`
+            : e.kind === 'interrupted'
+              ? `Interrupted — ${e.text ?? ''}`
+              : `${e.kind}${e.text ? ` — ${e.text}` : ''}`
 
 const hostOf = (url: string) => {
   try {
@@ -79,12 +89,30 @@ export const RefChip = ({ item }: { item: StreamItem }) => {
   )
 }
 
-// An item's side panel: edit it, act on it, and read its trail. The dispatch thread (phase 3) grows
-// out of this feed.
+// An item's side panel, a dispatch thread: its trail, the agent's live output, the result I
+// review, and a composer to answer into the same session.
 export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdited, onClose }: Props) => {
   const [title, setTitle] = useState(item.title)
   const [body, setBody] = useState(item.body ?? '')
   const [events, setEvents] = useState<StreamEvent[]>([])
+  const [reply, setReply] = useState('')
+  const runs = useSyncExternalStore(subscribeRuns, getRuns)
+  const run = runs.find((r) => r.taskId === streamTaskId(item.id))
+  const session = item.sessionIds.at(-1) ?? null
+  const canReply = !!session && !!item.checkout && item.status !== 'running'
+  const lastResultAt = events.map((e) => e.kind).lastIndexOf('result')
+
+  const send = async () => {
+    const text = reply.trim()
+    if (!text) return
+    setReply('')
+    try {
+      await replyStreamItem(item, text)
+    } catch (e) {
+      logError('stream', e, 'reply to stream item')
+      setReply(text) // keep what I typed
+    }
+  }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the re-read signal
   useEffect(() => {
@@ -163,16 +191,16 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 </div>
               </div>
             )}
-            <label className="flex flex-col gap-1 text-xs text-deck-400">
-              Notes
+            <details open={!!item.body} className="group text-xs text-deck-400">
+              <summary className="cursor-pointer select-none">Notes for the agent</summary>
               <textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                rows={4}
+                rows={3}
                 placeholder="Context for the agent: links, constraints, what done looks like…"
-                className="rounded-md border border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
+                className="mt-1.5 w-full rounded-md border border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
               />
-            </label>
+            </details>
             {dirty && (
               <div className="flex justify-end gap-2">
                 <button
@@ -196,35 +224,153 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
               </div>
             )}
 
-            <div className="flex flex-wrap gap-1.5">
-              {streamActions(item).map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  title={a.title}
-                  onClick={() => onAction(item, a.id)}
-                  className={`cursor-pointer rounded px-2 py-1 text-xs ${
-                    a.danger ? 'bg-red-600/20 text-red-300 hover:bg-red-600/40' : 'bg-deck-700 hover:bg-deck-600'
-                  }`}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
+            {item.branch && (
+              <p className="flex items-center gap-2 text-xs text-deck-500">
+                <span title={item.checkout ?? undefined}>⎇ {item.branch}</span>
+                {session && item.checkout && (
+                  <button
+                    type="button"
+                    onClick={() => resumeInGhostty(item.checkout ?? '', session)}
+                    className="cursor-pointer text-deck-400 hover:text-deck-200 hover:underline"
+                  >
+                    open session in Ghostty
+                  </button>
+                )}
+              </p>
+            )}
 
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-deck-400">Activity</h4>
-              <ol className="flex flex-col gap-1.5">
-                {events.map((e) => (
-                  <li key={e.id} className="flex items-baseline gap-2 text-sm">
+            {/* the thread: everything that happened to the item, one conversation */}
+            <ol className="flex flex-col gap-2.5">
+              {events.map((e, i) => {
+                const lastResult = e.kind === 'result' && i === lastResultAt
+                if (e.kind === 'result')
+                  return (
+                    <li
+                      key={e.id}
+                      className={`rounded-lg border p-3 ${lastResult && item.status === 'needs_review' ? 'border-grass-500/40 bg-grass-600/10' : 'border-deck-700 bg-deck-800/60'}`}
+                    >
+                      <p className="mb-1.5 flex items-center gap-2 text-xs text-deck-400">
+                        🤖 Result <span className="ml-auto">{messageTime(e.ts)}</span>
+                      </p>
+                      <Markdown text={e.text ?? ''} className="text-sm" />
+                      {lastResult && item.status === 'needs_review' && (
+                        <div className="mt-3 flex items-center gap-2 border-t border-deck-700 pt-2.5">
+                          <button
+                            type="button"
+                            onClick={() => onAction(item, 'approve')}
+                            className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
+                          >
+                            Approve
+                          </button>
+                          <span className="text-xs text-deck-500">or reply below to send it back with a note</span>
+                        </div>
+                      )}
+                    </li>
+                  )
+                if (e.kind === 'reply')
+                  return (
+                    <li
+                      key={e.id}
+                      className="ml-10 self-end whitespace-pre-wrap rounded-lg bg-deck-700 px-3 py-2 text-sm"
+                    >
+                      {e.text}
+                    </li>
+                  )
+                return (
+                  <li key={e.id} className="flex items-baseline gap-2 text-xs text-deck-400">
                     <span title={e.actor} className="shrink-0">
                       {actorIcon(e.actor)}
                     </span>
-                    <span className="min-w-0 flex-1 text-deck-200">{eventText(e)}</span>
-                    <span className="shrink-0 text-xs text-deck-500">{messageTime(e.ts)}</span>
+                    <span className={`min-w-0 flex-1 ${e.kind === 'failed' ? 'text-red-300' : ''}`}>
+                      {eventText(e)}
+                    </span>
+                    <span className="shrink-0 text-deck-500">{messageTime(e.ts)}</span>
                   </li>
+                )
+              })}
+              {run && item.status === 'running' && (
+                <li className="flex flex-col gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                  <p className="flex items-center gap-2 text-xs text-amber-300">
+                    <span className="animate-pulse">● agent running</span>
+                    <button
+                      type="button"
+                      onClick={() => cancelStreamItem(item)}
+                      className="ml-auto cursor-pointer rounded bg-deck-700 px-2 py-0.5 text-deck-200 hover:bg-deck-600"
+                    >
+                      Cancel
+                    </button>
+                  </p>
+                  {run.lines
+                    .filter((l) => l.kind !== 'user')
+                    .slice(-40)
+                    .map((l, j) =>
+                      l.kind === 'tool' ? (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: run lines are append-only
+                        <p key={j} className="truncate font-mono text-[11px] text-deck-500">
+                          › {l.text}
+                        </p>
+                      ) : l.kind === 'error' ? (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: run lines are append-only
+                        <p key={j} className="text-xs text-red-300">
+                          {l.text}
+                        </p>
+                      ) : (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: run lines are append-only
+                        <Markdown key={j} text={l.text} className="text-sm" />
+                      ),
+                    )}
+                </li>
+              )}
+            </ol>
+          </div>
+
+          {/* the composer: my reply goes into the item's session and the agent picks it up */}
+          <div className="shrink-0 border-t border-deck-800 p-3">
+            {canReply && (
+              <div className="mb-2 flex items-end gap-2">
+                <textarea
+                  value={reply}
+                  onChange={(e) => setReply(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.metaKey) {
+                      e.preventDefault()
+                      send()
+                    }
+                  }}
+                  rows={2}
+                  placeholder="Reply to the agent — a note on the result, an answer, “push it and open a PR”…"
+                  className="min-w-0 flex-1 resize-none rounded-md border border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={!reply.trim()}
+                  className="h-9 shrink-0 cursor-pointer rounded-md bg-grass-600 px-3 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
+                >
+                  Send
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {streamActions(item)
+                .filter((a) => a.id !== 'approve') // the result card carries it
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    title={a.title}
+                    onClick={() => onAction(item, a.id)}
+                    className={`cursor-pointer rounded px-2 py-1 text-xs ${
+                      a.danger
+                        ? 'bg-red-600/20 text-red-300 hover:bg-red-600/40'
+                        : a.id === 'run' || a.id === 'retry'
+                          ? 'bg-grass-600 text-white hover:bg-grass-500'
+                          : 'bg-deck-700 hover:bg-deck-600'
+                    }`}
+                  >
+                    {a.label}
+                  </button>
                 ))}
-              </ol>
             </div>
           </div>
         </>

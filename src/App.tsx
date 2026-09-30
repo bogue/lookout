@@ -22,6 +22,7 @@ import {
   setPrButtons,
   setRepos,
   setReviewButtons,
+  setStreamAutoRun,
 } from './lib/config'
 import {
   addSessionId,
@@ -70,6 +71,7 @@ import {
 } from './lib/runs'
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
+import { onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
@@ -96,6 +98,8 @@ import { Stream } from './views/Stream'
 const POLL_MS = 10 * 60 * 1000
 // on tab change we do a lightweight sync of just that tab's data, but not more often than this
 const MIN_PARTIAL_MS = 60 * 1000
+// Stream Auto-run heartbeat: changes already tick it, this only catches what slipped past
+const STREAM_TICK_MS = 30 * 1000
 
 const parseFollowupSummary = (text: string) => {
   const m = text.match(/(\d+)\s*addressed\D*?(\d+)\s*partial\D*?(\d+)\s*pending/i)
@@ -116,6 +120,7 @@ const App = () => {
     openInBrowser: false,
     notifications: true,
     mergeMethod: 'merge',
+    streamAutoRun: false,
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -225,6 +230,26 @@ const App = () => {
     const interval = setInterval(refresh, POLL_MS)
     return () => clearInterval(interval)
   }, [refresh, reload, reloadMyPrs, reloadAlerts])
+
+  // Stream: a run can't outlive the app — cards left "running" are marked interrupted
+  useEffect(() => {
+    recoverStreamRuns().catch((e) => logError('stream', e, 'recover runs'))
+  }, [])
+
+  // Stream Auto-run: start queued cards whenever something changes (a card added, a run ended), plus
+  // a slow heartbeat for anything missed. Off = nothing is scheduled at all.
+  const { streamAutoRun, repos: watchedRepos } = config
+  useEffect(() => {
+    if (!streamAutoRun) return
+    const tick = () => tickStream(watchedRepos)
+    tick()
+    const off = onStreamChange(tick)
+    const interval = setInterval(tick, STREAM_TICK_MS)
+    return () => {
+      off()
+      clearInterval(interval)
+    }
+  }, [streamAutoRun, watchedRepos])
 
   // The `lookout` CLI pings the app's socket after it writes, so a card moved from a terminal shows
   // up at once instead of at the next sync. The event is only a hint that something changed —
@@ -681,7 +706,16 @@ const App = () => {
             menuFor={(pr) => cardMenu(myPrToTask(pr), 'pr')}
           />
         )}
-        {view === 'stream' && <Stream repos={config.repos} />}
+        {view === 'stream' && (
+          <Stream
+            repos={config.repos}
+            autoRun={config.streamAutoRun}
+            onAutoRun={async (on) => {
+              await setStreamAutoRun(on)
+              setConfig(await getConfig())
+            }}
+          />
+        )}
         {view === 'discovery' && (
           <Discovery
             tasks={tasks}

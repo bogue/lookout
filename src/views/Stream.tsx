@@ -33,13 +33,18 @@ import {
   tagSuggestions,
 } from '../lib/stream'
 import { guessProjects } from '../lib/streamproject'
+import { notifyStream, onStreamChange, runStreamItem } from '../lib/streamrunner'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
 
 // The Stream board: things I dumped for Lookout's agents to work through (AI_TASKS/2026-09-29-stream-tab.md).
 // Manual for now: dump, prioritise by drag, move by hand. Agents pick items up in the next phases.
 
-type Props = { repos: WatchedRepo[] }
+type Props = {
+  repos: WatchedRepo[]
+  autoRun: boolean // agents pick queued cards on their own
+  onAutoRun: (on: boolean) => void
+}
 
 // statuses whose column already says it all get no tag
 const QUIET: StreamStatus[] = ['idea', 'queued', 'done']
@@ -83,7 +88,13 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
       }}
       onDragEnd={onDragEnd}
       className={`group relative cursor-pointer rounded-lg border border-deck-700 bg-deck-800/80 p-3 transition-all duration-150 hover:border-deck-600 hover:bg-white/10 ${
-        item.status === 'paused' || item.status === 'skipped' ? 'opacity-60' : ''
+        item.status === 'paused' || item.status === 'skipped'
+          ? 'opacity-60'
+          : item.status === 'running'
+            ? 'card-running'
+            : item.status === 'needs_review'
+              ? 'card-awaiting'
+              : ''
       }`}
     >
       {actions.length > 0 && (
@@ -399,7 +410,7 @@ const Dump = ({
   )
 }
 
-export const Stream = ({ repos }: Props) => {
+export const Stream = ({ repos, autoRun, onAutoRun }: Props) => {
   const [items, setItems] = useState<StreamItem[]>([])
   const [version, setVersion] = useState(0) // bumped after every write: the open panel re-reads its feed
   const [openId, setOpenId] = useState<string | null>(null)
@@ -418,17 +429,20 @@ export const Stream = ({ repos }: Props) => {
     }
   }, [])
 
+  // the runner writes from outside this view (a run ended, a session started): reload on its feed
   useEffect(() => {
     reload()
+    return onStreamChange(reload)
   }, [reload])
 
+  // a write, then the change feed: this view reloads, and Auto-run gets its chance to pick
   const write = async (fn: () => Promise<unknown>, what: string) => {
     try {
       await fn()
     } catch (e) {
       logError('stream', e, what)
     }
-    await reload()
+    notifyStream()
   }
 
   const names = useMemo(() => repos.map((r) => r.repo), [repos])
@@ -470,6 +484,7 @@ export const Stream = ({ repos }: Props) => {
   }, [items, names])
 
   const onAction = (item: StreamItem, action: StreamActionId) => {
+    if (action === 'run' || action === 'retry') return write(() => runStreamItem(item, repos, 'me'), `stream ${action}`)
     const status = applyStreamAction(item.status, action)
     if (status) return write(() => setStreamStatus(item, status, entryRank(items, status)), `stream ${action}`)
     if (action === 'top' || action === 'bottom') {
@@ -523,6 +538,28 @@ export const Stream = ({ repos }: Props) => {
 
   return (
     <div className="flex h-full flex-col">
+      <div className="mb-2 flex shrink-0 items-center justify-end gap-3 text-xs text-deck-400">
+        <span>{items.filter((x) => x.status === 'running').length} running</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoRun}
+          onClick={() => onAutoRun(!autoRun)}
+          title={
+            autoRun ? 'Agents pick the top of Queued on their own' : 'Nothing starts on its own — use Run now on a card'
+          }
+          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 hover:bg-deck-800"
+        >
+          <span
+            className={`relative h-4 w-7 rounded-full transition-colors ${autoRun ? 'bg-grass-500' : 'bg-deck-600'}`}
+          >
+            <span
+              className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${autoRun ? 'left-3.5' : 'left-0.5'}`}
+            />
+          </span>
+          <span className={autoRun ? 'text-deck-100' : ''}>Auto-run</span>
+        </button>
+      </div>
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
         {STREAM_COLUMNS.map((col) => {
           const colItems = sortColumn(items, col.value)

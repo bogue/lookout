@@ -67,7 +67,14 @@ export const getConfig = async (): Promise<Config> => {
     openInBrowser: (await s.get<boolean>('openInBrowser')) ?? false,
     notifications: (await s.get<boolean>('notifications')) ?? true,
     mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
+    // off by default: agents spending tokens on their own is something I switch on
+    streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? false,
   }
+}
+
+export const setStreamAutoRun = async (streamAutoRun: boolean) => {
+  const s = await getStore()
+  await s.set('streamAutoRun', streamAutoRun)
 }
 
 export const setOpenInBrowser = async (openInBrowser: boolean) => {

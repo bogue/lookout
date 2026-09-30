@@ -18,6 +18,9 @@ describe('rowToStreamItem', () => {
         priority: null,
         priority_reason: null,
         priority_source: null,
+        branch: 'lookout-stream-i1',
+        checkout: '/p/app/.claude/worktrees/lookout-stream-i1',
+        session_ids: '["s1","s2"]',
         created_by: 'me',
         created_at: '2026-09-30T00:00:00Z',
         updated_at: '2026-09-30T01:00:00Z',
@@ -36,6 +39,9 @@ describe('rowToStreamItem', () => {
       priority: null,
       priorityReason: null,
       prioritySource: null,
+      branch: 'lookout-stream-i1',
+      checkout: '/p/app/.claude/worktrees/lookout-stream-i1',
+      sessionIds: ['s1', 's2'],
       createdBy: 'me',
       createdAt: '2026-09-30T00:00:00Z',
       updatedAt: '2026-09-30T01:00:00Z',
@@ -58,6 +64,9 @@ describe('rowToStreamItem on values this build does not know', () => {
     priority: 'meh',
     priority_reason: null,
     priority_source: 'oracle',
+    branch: null,
+    checkout: null,
+    session_ids: 'not json',
     created_by: 'me',
     created_at: '2026-09-30T00:00:00Z',
     updated_at: '2026-09-30T00:00:00Z',
@@ -70,6 +79,7 @@ describe('rowToStreamItem on values this build does not know', () => {
       priority: null,
       prioritySource: null,
       refKind: null,
+      sessionIds: [],
     })
   })
 })

@@ -162,6 +162,7 @@ export type Config = {
   openInBrowser: boolean // links open in the default browser instead of the in-app window (prwindow.ts)
   notifications: boolean // OS notifications for new alerts; the OS permission is asked when it's switched on
   mergeMethod: MergePreference // the Merge button's default strategy, when the repo allows it
+  streamAutoRun: boolean // Stream: agents pick queued cards on their own (off = only Run now starts one)
 }
 
 // Stream: things I dumped for Lookout's agents to work through (src/lib/stream.ts).
@@ -203,6 +204,9 @@ export type StreamItem = {
   priority: StreamPriority | null // Needs you criticality (Haiku, or set by me)
   priorityReason: string | null
   prioritySource: 'haiku' | 'me' | null
+  branch: string | null // the branch its agent works on, once a run prepared it
+  checkout: string | null // the worktree path its runs use
+  sessionIds: string[] // Claude sessions run for it, oldest first
   createdBy: string // me | cli | watcher:<id>
   createdAt: string
   updatedAt: string

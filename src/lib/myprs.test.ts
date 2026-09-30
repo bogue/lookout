@@ -52,6 +52,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   openInBrowser: false,
   notifications: true,
   mergeMethod: 'merge',
+  streamAutoRun: false,
 })
 
 const ghPr = (o: Partial<GhMyPr> = {}): GhMyPr => ({

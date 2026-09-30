@@ -17,6 +17,9 @@ export type StreamItemRow = {
   priority: string | null
   priority_reason: string | null
   priority_source: string | null
+  branch: string | null
+  checkout: string | null
+  session_ids: string // JSON array
   created_by: string
   created_at: string
   updated_at: string
@@ -38,6 +41,16 @@ const oneOf = <T extends string>(v: string | null, known: readonly T[], fallback
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const
 
+// a JSON array of session ids; anything else is none
+const sessionIdsOf = (json: string): string[] => {
+  try {
+    const v = JSON.parse(json)
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 export const rowToStreamItem = (r: StreamItemRow): StreamItem => ({
   id: r.id,
   repo: r.repo,
@@ -52,6 +65,9 @@ export const rowToStreamItem = (r: StreamItemRow): StreamItem => ({
   priority: oneOf(r.priority, PRIORITIES, null),
   priorityReason: r.priority_reason,
   prioritySource: oneOf(r.priority_source, ['haiku', 'me'], null),
+  branch: r.branch,
+  checkout: r.checkout,
+  sessionIds: sessionIdsOf(r.session_ids),
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,

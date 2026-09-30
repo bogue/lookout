@@ -551,6 +551,68 @@ export const askStreamProject = async (item: StreamItem) => {
   await logStreamEvent(d, item.id, 'question', 'Which project? Haiku could not tell from the text', 'lookout')
 }
 
+// ── Stream runs: an agent working an item. Every write logs who did it. ──
+
+const now = () => new Date().toISOString()
+
+export const streamItem = async (id: string): Promise<StreamItem | null> => {
+  const d = await getDb()
+  const rows = await d.select<StreamItemRow[]>('SELECT * FROM stream_items WHERE id = $1', [id])
+  return rows[0] ? rowToStreamItem(rows[0]) : null
+}
+
+// Claimed for a run before its worktree exists, so a second scheduler tick can't pick it again.
+// The rank goes: Active has no manual order.
+export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout') => {
+  const d = await getDb()
+  await d.execute(
+    "UPDATE stream_items SET status = 'running', gate = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2",
+    [now(), id],
+  )
+  await logStreamEvent(d, id, 'started', text, actor)
+}
+
+export const setStreamCheckout = async (id: string, branch: string, checkout: string) => {
+  const d = await getDb()
+  await d.execute('UPDATE stream_items SET branch = $1, checkout = $2 WHERE id = $3', [branch, checkout, id])
+}
+
+export const addStreamSession = async (id: string, sessionId: string) => {
+  const d = await getDb()
+  const item = await streamItem(id)
+  if (!item || item.sessionIds.includes(sessionId)) return
+  await d.execute('UPDATE stream_items SET session_ids = $1 WHERE id = $2', [
+    JSON.stringify([...item.sessionIds, sessionId]),
+    id,
+  ])
+}
+
+// the agent answered: its final turn is the summary I review (the result gate)
+export const streamRunResult = async (id: string, text: string) => {
+  const d = await getDb()
+  await d.execute(
+    "UPDATE stream_items SET status = 'needs_review', gate = 'result', sort_order = NULL, updated_at = $1 WHERE id = $2",
+    [now(), id],
+  )
+  await logStreamEvent(d, id, 'result', text, 'lookout')
+}
+
+// The process ended without an answer. Only an item still running moves: a result already sent it on.
+export const streamRunEnded = async (id: string, status: 'failed' | 'interrupted', text: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = $1, sort_order = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+    [status, now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, status, text, 'lookout')
+}
+
+// my reply into the item's session (a note on a rejected result, an answer, "push it now")
+export const logStreamReply = async (id: string, text: string) => {
+  const d = await getDb()
+  await logStreamEvent(d, id, 'reply', text, 'me')
+}
+
 // A status change. Entering another column resets the card's rank to `entryRank` there (stream.ts):
 // on top of Done, unranked elsewhere. The caller re-ranks the whole column right after a drag.
 export const setStreamStatus = async (item: StreamItem, status: StreamStatus, rank: number | null = null) => {
