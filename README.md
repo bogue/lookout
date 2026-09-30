@@ -33,6 +33,8 @@ brew install --cask lookout                    # --force to replace a hand-insta
 
 Grab the latest `.dmg` from [Releases](https://github.com/chartrandf/lookout/releases) (universal — Apple Silicon + Intel) and drag **Lookout** to Applications.
 
+On **Linux** (x86_64), grab the `.deb` (`sudo apt install ./Lookout_*.deb`) or the `.AppImage` (`chmod +x`, then run it).
+
 ### 🔒 Quarantine Issue
 
 The bundle is self-signed, so macOS quarantines it. You may need to release the quarantine manually from the Terminal.
