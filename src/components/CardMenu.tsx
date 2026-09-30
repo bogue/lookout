@@ -45,6 +45,9 @@ const ICONS: Record<CardActionId, ReactNode> = {
   ),
 }
 
+// one action's icon on its own, for a control that lives outside the menu (the PR panel's snooze)
+export const CardActionIcon = ({ id }: { id: CardActionId }) => ICONS[id]
+
 type ListProps = {
   actions: CardAction[]
   onSelect: (id: CardActionId) => void
