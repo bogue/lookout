@@ -1,6 +1,7 @@
 import { exists } from '@tauri-apps/plugin-fs'
 import { Command } from '@tauri-apps/plugin-shell'
 import type { StreamItem, WatchedRepo } from '../types'
+import { ACTION_TOOLS } from './claude'
 import {
   addStreamSession,
   claimStreamRun,
@@ -12,10 +13,10 @@ import {
 } from './db'
 import { allowPath } from './fsscope'
 import { errText, logError, logInfo } from './log'
-import { cancelRun, getRun, replyRun, resumeRun, startRun } from './runs'
+import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
-import { pickNext, streamBranch, streamPrompt, worktreeDir } from './streamrun'
-import { listWorktrees } from './worktrees'
+import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { parseWorktrees } from './worktrees'
 
 // Runs Stream items: each in its own worktree, its result waiting for me in Needs you. Module
 // level, like runs.ts, so agents keep going while I'm on another tab.
@@ -43,13 +44,66 @@ const git = async (args: string[], cwd: string) => {
   return out.stdout.trim()
 }
 
-// origin's default branch (origin/main, origin/master…)
+const gitOk = (args: string[], cwd: string) =>
+  git(args, cwd).then(
+    () => true,
+    () => false,
+  )
+
+// origin's default branch: origin/HEAD when the clone knows it, else whichever of main/master exists
 const defaultBase = async (repoPath: string) => {
-  try {
-    return await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoPath)
-  } catch {
-    return 'origin/main'
+  const head = await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoPath).catch(() => null)
+  if (head) return head
+  for (const b of ['origin/main', 'origin/master'])
+    if (await gitOk(['rev-parse', '--verify', '--quiet', b], repoPath)) return b
+  throw new Error('no origin/HEAD, origin/main or origin/master to branch from')
+}
+
+// every checkout of the clone, read fresh (worktrees.ts caches for 15 s, too long for "does it exist")
+const worktrees = async (repoPath: string) => parseWorktrees(await git(['worktree', 'list', '--porcelain'], repoPath))
+
+// The checkout the agent works in: one worktree per branch, never my own clone. A PR item uses the
+// PR's branch (`gh pr checkout` in a fresh worktree handles forks and brings a stale local branch up
+// to date); new work gets its own branch off origin's default one. Kept on the item, so a retry or a
+// reply lands in the same place.
+const prepareCheckout = async (item: StreamItem, repoPath: string): Promise<{ branch: string; checkout: string }> => {
+  if (item.checkout && item.branch && item.checkout !== repoPath && (await exists(item.checkout).catch(() => false)))
+    return { branch: item.branch, checkout: item.checkout }
+  await git(['fetch', 'origin', '--prune'], repoPath).catch(() => null) // offline: work from what we have
+  await git(['worktree', 'prune'], repoPath).catch(() => null) // forget worktree dirs deleted by hand
+  const pr = item.refKind === 'pr' && item.ref ? prRefOf(item.ref) : null
+
+  if (pr) {
+    if (pr.repo !== item.repo) throw new Error(`${item.ref} is not a PR of ${item.repo}`)
+    const branch = await prBranch(pr.repo, pr.number, repoPath)
+    const list = await worktrees(repoPath)
+    if (list.some((w) => w.path === repoPath && w.branch === branch))
+      throw new Error(
+        `${branch} is checked out in your clone (${repoPath}) — switch it away so the agent gets its own worktree`,
+      )
+    const existing = list.find((w) => w.branch === branch && w.path !== repoPath)
+    if (existing) return { branch, checkout: existing.path }
+    const dir = worktreeDir(repoPath, `pr-${pr.number}`)
+    if (!list.some((w) => w.path === dir)) await git(['worktree', 'add', '--detach', dir], repoPath)
+    await allowPath(dir)
+    const out = await Command.create('gh', ['pr', 'checkout', String(pr.number), '--repo', pr.repo], {
+      cwd: dir,
+    }).execute()
+    if (out.code !== 0) throw new Error(`gh pr checkout ${pr.number}: ${out.stderr.trim()}`)
+    return { branch, checkout: dir }
   }
+
+  const branch = streamBranch(item.id)
+  const dir = worktreeDir(repoPath, branch)
+  const list = await worktrees(repoPath)
+  const holder = list.find((w) => w.branch === branch)
+  if (holder && holder.path !== repoPath) return { branch, checkout: holder.path }
+  // a retry after the worktree was cleaned up: the branch (and the agent's commits) is still there
+  const branchExists = await gitOk(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoPath)
+  if (branchExists) await git(['worktree', 'add', dir, branch], repoPath)
+  else await git(['worktree', 'add', '-b', branch, dir, await defaultBase(repoPath)], repoPath)
+  await allowPath(dir)
+  return { branch, checkout: dir }
 }
 
 const prBranch = async (repo: string, number: number, repoPath: string) => {
@@ -62,98 +116,127 @@ const prBranch = async (repo: string, number: number, repoPath: string) => {
   return out.stdout.trim()
 }
 
-// The checkout the agent works in: one worktree per branch. A PR item uses the PR's branch (an
-// existing checkout of it, the clone included, before making a new one); new work gets a fresh
-// branch off origin's default branch. Kept on the item, so a retry or a reply lands in the same place.
-const prepareCheckout = async (item: StreamItem, repoPath: string): Promise<{ branch: string; checkout: string }> => {
-  if (item.checkout && item.branch && (await exists(item.checkout).catch(() => false)))
-    return { branch: item.branch, checkout: item.checkout }
-  await git(['fetch', 'origin', '--prune'], repoPath).catch(() => null) // offline: work from what we have
-  const pr = item.refKind === 'pr' && item.ref ? prRefOf(item.ref) : null
-  if (pr && pr.repo === item.repo) {
-    const branch = await prBranch(pr.repo, pr.number, repoPath)
-    const existing = (await listWorktrees(repoPath)).find((w) => w.branch === branch)
-    if (existing) return { branch, checkout: existing.path }
-    const dir = worktreeDir(repoPath, branch)
-    await git(['worktree', 'add', dir, branch], repoPath) // DWIM: tracks origin/<branch>
-    await allowPath(dir)
-    return { branch, checkout: dir }
-  }
-  const branch = streamBranch(item.id)
-  const dir = worktreeDir(repoPath, branch)
-  await git(['worktree', 'add', '-b', branch, dir, await defaultBase(repoPath)], repoPath)
-  await allowPath(dir)
-  return { branch, checkout: dir }
+// Items being started right now (worktree prep takes seconds): checked and set synchronously, so a
+// double click or a tick racing Run now can't start the same card twice.
+const starting = new Set<string>()
+
+// Every dispatch gets a number; a callback from an older one (a process still winding down after a
+// reply started the next turn) writes nothing. Writes for one item are chained, so a run's result
+// always lands before its exit.
+const dispatches = new Map<string, number>()
+const queues = new Map<string, Promise<unknown>>()
+const serial = (id: string, fn: () => Promise<unknown>) => {
+  const next = (queues.get(id) ?? Promise.resolve()).then(fn).catch((e) => logError('stream', e, 'save run state'))
+  queues.set(id, next)
+  return next.then(notifyStream)
 }
 
-// what the item's run reports back, written to the item as it happens
-const callbacks = (id: string) => ({
-  onSession: (_: string, sessionId: string) => {
-    addStreamSession(id, sessionId)
-      .then(notifyStream)
-      .catch((e) => logError('stream', e, 'save session'))
-  },
-  onResult: (_: string, text: string) => {
-    streamRunResult(id, text || '(the agent finished without a summary)')
-      .then(notifyStream)
-      .catch((e) => logError('stream', e, 'save result'))
-  },
-  onEnd: (taskId: string, status: string) => {
-    // a result already moved the item on; this only catches runs that died or were cancelled
-    const last = getRun(taskId)
-      ?.lines.filter((l) => l.kind === 'error')
-      .at(-1)?.text
-    const end =
-      status === 'error'
-        ? streamRunEnded(id, 'failed', last ?? 'claude exited with an error')
-        : streamRunEnded(id, 'interrupted', status === 'awaiting-input' ? 'cancelled' : 'ended without a result')
-    end.then(notifyStream).catch((e) => logError('stream', e, 'save run end'))
-  },
-})
+const callbacks = (id: string) => {
+  const n = (dispatches.get(id) ?? 0) + 1
+  dispatches.set(id, n)
+  const current = () => dispatches.get(id) === n
+  return {
+    onSession: (_: string, sessionId: string) => {
+      if (current()) serial(id, () => addStreamSession(id, sessionId))
+    },
+    onResult: (_: string, text: string, isError: boolean) => {
+      if (!current()) return
+      serial(id, () =>
+        isError
+          ? streamRunEnded(id, 'failed', text || 'claude reported an error')
+          : streamRunResult(id, text || '(the agent finished without a summary)'),
+      )
+    },
+    onEnd: (taskId: string, status: string) => {
+      if (!current()) return
+      // a result already moved the item on (the write is a no-op then); this catches runs that died
+      const last = getRun(taskId)
+        ?.lines.filter((l) => l.kind === 'error')
+        .at(-1)?.text
+      serial(id, () =>
+        status === 'error'
+          ? streamRunEnded(id, 'failed', last ?? 'claude exited with an error')
+          : streamRunEnded(id, 'interrupted', status === 'awaiting-input' ? 'cancelled' : 'ended without a result'),
+      )
+    },
+  }
+}
 
-// Start (or retry) an item's agent. A retry with a session resumes it in the same worktree.
+// a checkout another live Stream run is already using (two cards on the same PR)
+const busyCheckout = (checkout: string, taskId: string) =>
+  getRuns().some((r) => r.taskId !== taskId && r.repoPath === checkout && r.status === 'running')
+
+// Start (or retry) an item's agent. A retry with a session resumes it in the same worktree. The agent
+// runs with the Stream tools: local git only, nothing it can push or publish on its own.
 export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], actor: 'me' | 'lookout') => {
   const taskId = streamTaskId(item.id)
-  if (getRun(taskId)?.status === 'running') return
-  const repoPath = repos.find((r) => r.repo === item.repo)?.path
-  await claimStreamRun(item.id, actor === 'me' ? 'started by hand' : 'picked from Queued', actor)
-  notifyStream()
-  if (!repoPath) {
-    await streamRunEnded(item.id, 'failed', `${item.repo || 'no project'} is not a watched project`)
-    return notifyStream()
-  }
-  let checkout: string
+  if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
+  starting.add(item.id)
   try {
-    const c = await prepareCheckout(item, repoPath)
-    checkout = c.checkout
-    await setStreamCheckout(item.id, c.branch, c.checkout)
-    logInfo('stream', `${item.id}: ${c.branch} in ${c.checkout}`)
-  } catch (e) {
-    await streamRunEnded(item.id, 'failed', `could not prepare a worktree: ${errText(e)}`)
-    return notifyStream()
+    if (!(await claimStreamRun(item.id, actor === 'me' ? 'started by hand' : 'picked from Queued', actor))) return
+    notifyStream()
+    const repoPath = repos.find((r) => r.repo === item.repo)?.path
+    if (!repoPath) {
+      await streamRunEnded(item.id, 'failed', `${item.repo || 'no project'} is not a watched project`)
+      return notifyStream()
+    }
+    let checkout: string
+    try {
+      const c = await prepareCheckout(item, repoPath)
+      checkout = c.checkout
+      if (busyCheckout(checkout, taskId)) throw new Error(`another card is already working in ${checkout}`)
+      await setStreamCheckout(item.id, c.branch, c.checkout)
+      logInfo('stream', `${item.id}: ${c.branch} in ${c.checkout}`)
+    } catch (e) {
+      await streamRunEnded(item.id, 'failed', `could not prepare a worktree: ${errText(e)}`)
+      return notifyStream()
+    }
+    // a session only resumes where it ran; a new checkout starts over (setStreamCheckout cleared them)
+    const session = item.checkout === checkout ? item.sessionIds.at(-1) : undefined
+    const cbs = callbacks(item.id)
+    if (session)
+      await resumeRun(
+        taskId,
+        'Stream',
+        'stream',
+        checkout,
+        'Continue where you left off.',
+        session,
+        cbs,
+        STREAM_TOOLS,
+        STREAM_DENY,
+      )
+    else await startRun(taskId, 'Stream', 'stream', streamPrompt(item), checkout, cbs, STREAM_TOOLS, STREAM_DENY)
+  } finally {
+    starting.delete(item.id)
   }
-  const session = item.sessionIds.at(-1)
-  if (session && item.checkout === checkout)
-    await resumeRun(taskId, 'Stream', 'stream', checkout, 'Continue where you left off.', session, callbacks(item.id))
-  else await startRun(taskId, 'Stream', 'stream', streamPrompt(item), checkout, callbacks(item.id))
 }
 
-// My message into the item's session: a note on a result I reject, an answer, "now push it".
+// My message into the item's session: a note on a result I reject, an answer, "now push it". It is my
+// instruction, so it runs with the regular allowlist (push allowed) instead of the Stream one.
 export const replyStreamItem = async (item: StreamItem, text: string) => {
   const taskId = streamTaskId(item.id)
   const session = item.sessionIds.at(-1)
   if (!session || !item.checkout) return
-  await logStreamReply(item.id, text)
-  await claimStreamRun(item.id, 'resumed with my reply', 'me')
-  notifyStream()
-  if (getRun(taskId)) await replyRun(taskId, text, callbacks(item.id), session)
-  else await resumeRun(taskId, 'Stream', 'stream', item.checkout, text, session, callbacks(item.id))
+  if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
+  starting.add(item.id)
+  try {
+    if (!(await claimStreamRun(item.id, 'resumed with my reply', 'me'))) return
+    await logStreamReply(item.id, text)
+    notifyStream()
+    // always a fresh Run: the previous process may still be exiting, and must not touch this one
+    await resumeRun(taskId, 'Stream', 'stream', item.checkout, text, session, callbacks(item.id), ACTION_TOOLS)
+  } finally {
+    starting.delete(item.id)
+  }
 }
 
 // App start: a run can't outlive the app, so a card still "running" with no live run was cut short.
 // Checked against the live registry, so a hot reload in dev doesn't interrupt a real run.
 export const recoverStreamRuns = async () => {
-  const stale = (await streamItems()).filter((x) => x.status === 'running' && streamRun(x)?.status !== 'running')
+  const stale = (await streamItems()).filter(
+    (x) => x.status === 'running' && !starting.has(x.id) && streamRun(x)?.status !== 'running',
+  )
   for (const x of stale) await streamRunEnded(x.id, 'interrupted', 'Lookout was closed while the agent ran')
   if (stale.length) notifyStream()
 }

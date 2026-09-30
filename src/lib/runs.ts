@@ -18,6 +18,11 @@ export type Run = {
   status: 'running' | 'awaiting-input' | 'error' | 'closed'
   child: Child | null
   allowedTools: string // tool allowlist for this run's command (reused on reply/resume)
+  disallowedTools?: string // denied even when my own settings allow them (Stream: no push, no merge)
+  // Bumped on every dispatch. A reply starts a new process on the same Run while the previous one
+  // may still be shutting down; its late events (exit above all) carry the old number and are dropped,
+  // or they would mark the new turn closed and drop its child handle.
+  gen: number
 }
 
 // Module-level registry so runs survive view switches; React subscribes via listeners.
@@ -41,12 +46,14 @@ export const getRun = (taskId: string) => runs.get(taskId)
 
 type Callbacks = {
   onSession?: (taskId: string, sessionId: string) => void
-  onResult?: (taskId: string, resultText: string) => void
+  onResult?: (taskId: string, resultText: string, isError: boolean) => void
   // the process is gone (or never started): the run's final status says how it went
   onEnd?: (taskId: string, status: Run['status']) => void
 }
 
 const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSessionId?: string) => {
+  run.gen += 1
+  const gen = run.gen
   run.status = 'running'
   notify()
   logInfo('run', `${run.taskId}: ${run.command} in ${run.repoPath}${resumeSessionId ? ' (resume)' : ''}`)
@@ -55,6 +62,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
       prompt,
       run.repoPath,
       (e) => {
+        if (gen !== run.gen) return // a previous turn's process, still winding down
         if (e.type === 'init') {
           run.sessionId = e.sessionId
           callbacks.onSession?.(run.taskId, e.sessionId)
@@ -67,7 +75,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
           run.status = 'awaiting-input'
           // the final summary usually duplicates the last text block — only push when it doesn't
           if (e.text && run.lines.at(-1)?.text !== e.text) run.lines.push({ kind: 'text', text: e.text })
-          callbacks.onResult?.(run.taskId, e.text)
+          callbacks.onResult?.(run.taskId, e.text, e.isError)
         } else if (e.type === 'exit') {
           run.child = null
           if (run.status === 'running') run.status = e.code === 0 ? 'closed' : 'error'
@@ -78,6 +86,7 @@ const dispatch = async (run: Run, prompt: string, callbacks: Callbacks, resumeSe
       },
       resumeSessionId,
       run.allowedTools,
+      run.disallowedTools,
     )
   } catch (e) {
     // claude never started (missing from PATH, cwd gone, denied by the shell scope). Without this the
@@ -98,6 +107,7 @@ export const startRun = async (
   repoPath: string,
   callbacks: Callbacks = {},
   allowedTools: string = REVIEW_TOOLS,
+  disallowedTools?: string,
 ) => {
   const existing = runs.get(taskId)
   if (existing && existing.status === 'running') return
@@ -111,6 +121,8 @@ export const startRun = async (
     status: 'running',
     child: null,
     allowedTools,
+    disallowedTools,
+    gen: 0,
   }
   runs.set(taskId, run)
   await dispatch(run, prompt, callbacks)
@@ -136,6 +148,7 @@ export const resumeRun = async (
   sessionId: string,
   callbacks: Callbacks = {},
   allowedTools: string = REVIEW_TOOLS,
+  disallowedTools?: string,
 ) => {
   const existing = runs.get(taskId)
   if (existing && existing.status === 'running') return
@@ -149,6 +162,8 @@ export const resumeRun = async (
     status: 'running',
     child: null,
     allowedTools,
+    disallowedTools,
+    gen: 0,
   }
   runs.set(taskId, run)
   await dispatch(run, text, callbacks, sessionId)

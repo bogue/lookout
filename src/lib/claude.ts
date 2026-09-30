@@ -4,7 +4,7 @@ export type StreamEvent =
   | { type: 'init'; sessionId: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; detail: string }
-  | { type: 'result'; text: string }
+  | { type: 'result'; text: string; isError: boolean } // isError: max turns, auth, API failure
   | { type: 'stderr'; text: string }
   | { type: 'exit'; code: number | null }
 
@@ -37,7 +37,8 @@ const parseLine = (line: string, onEvent: (e: StreamEvent) => void) => {
       else if (block.type === 'tool_use')
         onEvent({ type: 'tool', name: block.name, detail: toolDetail(block.input ?? {}) })
     }
-  } else if (msg.type === 'result') onEvent({ type: 'result', text: msg.result ?? msg.error ?? '' })
+  } else if (msg.type === 'result')
+    onEvent({ type: 'result', text: msg.result ?? msg.error ?? '', isError: msg.is_error === true })
 }
 
 export const spawnClaude = async (
@@ -46,6 +47,7 @@ export const spawnClaude = async (
   onEvent: (e: StreamEvent) => void,
   resumeSessionId?: string,
   allowedTools: string = REVIEW_TOOLS,
+  disallowedTools?: string,
 ): Promise<Child> => {
   const args = [
     '-p',
@@ -56,6 +58,7 @@ export const spawnClaude = async (
     '--verbose',
     '--allowedTools',
     allowedTools,
+    ...(disallowedTools ? ['--disallowedTools', disallowedTools] : []),
   ]
   const cmd = Command.create('claude', args, { cwd })
   cmd.stdout.on('data', (line: string) => parseLine(line, onEvent))

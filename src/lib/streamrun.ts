@@ -24,6 +24,51 @@ export const streamPrompt = (item: StreamItem): string => {
   return [task, ...context, RULES].join('\n\n')
 }
 
+// What an agent may do on its own. The result gate is enforced here, not only in the prompt: an
+// agent reading someone else's PR comments could be talked into pushing, so git is limited to local
+// work and gh to reading. My own reply into the session (replyStreamItem) runs with the regular
+// allowlist — "push it and open a PR" is then my call.
+export const STREAM_TOOLS = [
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+  'Bash(git show:*)',
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+  'Bash(git restore:*)',
+  'Bash(git rm:*)',
+  'Bash(git mv:*)',
+  'Bash(gh pr view:*)',
+  'Bash(gh pr diff:*)',
+  'Bash(gh pr checks:*)',
+  'Bash(gh issue view:*)',
+  'Bash(pnpm:*)',
+  'Bash(npx:*)',
+  'Bash(command:*)',
+  'Bash(lookout:*)',
+  'Read',
+  'Edit',
+  'Write',
+  'Glob',
+  'Grep',
+  'Task',
+  'TodoWrite',
+].join(',')
+
+// denied even if my own Claude settings allow them: deny wins over allow
+export const STREAM_DENY = [
+  'Bash(git push:*)',
+  'Bash(git reset --hard:*)',
+  'Bash(git clean:*)',
+  'Bash(gh pr merge:*)',
+  'Bash(gh pr create:*)',
+  'Bash(gh pr comment:*)',
+  'Bash(gh pr review:*)',
+  'Bash(gh pr close:*)',
+  'Bash(gh release:*)',
+  'Bash(gh api:*)',
+].join(',')
+
 // a new work item's branch: kebab-case, no `/`, no conventional prefix
 export const streamBranch = (id: string) => `lookout-stream-${id.slice(0, 8)}`
 

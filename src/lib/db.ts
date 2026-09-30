@@ -563,18 +563,25 @@ export const streamItem = async (id: string): Promise<StreamItem | null> => {
 
 // Claimed for a run before its worktree exists, so a second scheduler tick can't pick it again.
 // The rank goes: Active has no manual order.
-export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout') => {
+// false when it was already running: someone else (a tick, a double click) got there first
+export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout'): Promise<boolean> => {
   const d = await getDb()
-  await d.execute(
-    "UPDATE stream_items SET status = 'running', gate = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2",
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'running', gate = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
     [now(), id],
   )
+  if (!res.rowsAffected) return false
   await logStreamEvent(d, id, 'started', text, actor)
+  return true
 }
 
+// A session only resumes in the directory it ran in: a new checkout starts the session list over.
 export const setStreamCheckout = async (id: string, branch: string, checkout: string) => {
   const d = await getDb()
-  await d.execute('UPDATE stream_items SET branch = $1, checkout = $2 WHERE id = $3', [branch, checkout, id])
+  await d.execute(
+    "UPDATE stream_items SET session_ids = CASE WHEN checkout IS $2 THEN session_ids ELSE '[]' END, branch = $1, checkout = $2 WHERE id = $3",
+    [branch, checkout, id],
+  )
 }
 
 export const addStreamSession = async (id: string, sessionId: string) => {
@@ -588,13 +595,14 @@ export const addStreamSession = async (id: string, sessionId: string) => {
 }
 
 // the agent answered: its final turn is the summary I review (the result gate)
+// Only a running item moves: if I skipped or finished it meanwhile, my move stands.
 export const streamRunResult = async (id: string, text: string) => {
   const d = await getDb()
-  await d.execute(
-    "UPDATE stream_items SET status = 'needs_review', gate = 'result', sort_order = NULL, updated_at = $1 WHERE id = $2",
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'needs_review', gate = 'result', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'running'",
     [now(), id],
   )
-  await logStreamEvent(d, id, 'result', text, 'lookout')
+  if (res.rowsAffected) await logStreamEvent(d, id, 'result', text, 'lookout')
 }
 
 // The process ended without an answer. Only an item still running moves: a result already sent it on.

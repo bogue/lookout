@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamItem } from '../types'
-import { pickNext, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
 
 const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   id: '3f2a9c10-aaaa-bbbb-cccc-000000000000',
@@ -47,6 +47,20 @@ describe('streamPrompt', () => {
     const p = streamPrompt(item({ title: '/do-followup 2' }))
     expect(p.startsWith('/do-followup 2')).toBe(true)
     expect(p).toMatch(/do not push/i)
+  })
+})
+
+describe('stream tools', () => {
+  const allowed = STREAM_TOOLS.split(',')
+  const denied = STREAM_DENY.split(',')
+
+  it('lets an agent commit, never push, merge or publish on its own', () => {
+    expect(allowed).toContain('Bash(git commit:*)')
+    expect(allowed).not.toContain('Bash(git:*)')
+    expect(allowed).not.toContain('Bash(gh:*)')
+    expect(denied).toEqual(
+      expect.arrayContaining(['Bash(git push:*)', 'Bash(gh pr merge:*)', 'Bash(gh pr create:*)', 'Bash(gh api:*)']),
+    )
   })
 })
 
