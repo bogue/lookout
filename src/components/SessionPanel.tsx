@@ -671,9 +671,6 @@ export const SessionPanel = ({
               )}
             </div>
             {mergeError && <p className="w-full text-xs text-red-300">could not merge: {mergeError}</p>}
-            {run?.status === 'awaiting-input' && (
-              <span className="self-center text-xs text-grass-300">awaiting input</span>
-            )}
           </div>
 
           {/* terminal sits above the chat, capped so history always keeps room; each scrolls on its own */}
