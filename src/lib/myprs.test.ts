@@ -258,11 +258,23 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
     expect(written(`${REPO}#1`)?.snoozed).toBe(false)
   })
 
-  it('wakes when CI changes', async () => {
+  it('wakes when CI turns red', async () => {
     vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, ciState: 'pending' })])
     vi.mocked(listMyPrs).mockResolvedValue([ghPr({ statusCheckRollup: [{ conclusion: 'FAILURE' }] })])
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)?.snoozed).toBe(false)
+  })
+
+  it('keeps sleeping through a push that cycles CI pending -> pass', async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, ciState: 'pass' })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ statusCheckRollup: [{ status: 'IN_PROGRESS' }] })])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.snoozed).toBe(true)
+
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, ciState: 'pending' })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ statusCheckRollup: [{ conclusion: 'SUCCESS' }] })])
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.snoozed).toBe(true)
   })
 
   it('wakes when the PR runs into merge conflicts', async () => {
