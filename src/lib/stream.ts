@@ -188,7 +188,12 @@ export const prRefOf = (ref: string): { repo: string; number: number; url: strin
   return { repo: m[1], number: Number(m[2]), url: `https://github.com/${m[1]}/pull/${m[2]}` }
 }
 
-export type DumpItem = { title: string; refKind: StreamItem['refKind']; ref: string | null }
+export type DumpItem = {
+  title: string
+  repo: string | null // null: no tag, no picked project — Haiku guesses
+  refKind: StreamItem['refKind']
+  ref: string | null
+}
 
 // "in one branch", "together", "same PR": the list is one piece of work, don't split it
 const KEEP_TOGETHER = /\b(in one branch|one branch|same branch|together|same pr|one pr)\b/i
@@ -219,22 +224,99 @@ const expand = (line: string): string[] => {
   return targets.map((t) => `${before}${t}${after}`)
 }
 
-const refOf = (title: string, repo: string): Pick<DumpItem, 'refKind' | 'ref'> => {
+// What a title points at. A bare #2 needs the project to name a PR, so it stays unresolved until
+// the project is known (Haiku, or my answer) — then this runs again.
+export const dumpRef = (title: string, repo: string | null): Pick<DumpItem, 'refKind' | 'ref'> => {
   const url = title.match(PR_URL)
   if (url) return { refKind: 'pr', ref: `${url[1]}#${url[2]}` }
   const other = title.match(ANY_URL)
   if (other) return { refKind: 'url', ref: other[0].replace(URL_TAIL, '') }
   const pr = title.match(PR_NUMBER)
-  if (pr) return { refKind: 'pr', ref: `${repo}#${pr[1]}` }
+  if (pr && repo) return { refKind: 'pr', ref: `${repo}#${pr[1]}` }
   return { refKind: null, ref: null }
 }
 
+// `#app` or `#owner/app`: a project tag. It starts with a letter, so #2 stays a PR number.
+const PROJECT_TAG = /(^|\s)#([A-Za-z][\w.-]*(?:\/[\w.-]+)?)(?=\s|$)/g
+
+// the watched repo a tag names: the full owner/repo, or a short name only one project has
+const repoOfTag = (tag: string, repos: string[]): string | null => {
+  const t = tag.toLowerCase()
+  if (t.includes('/')) return repos.find((r) => r.toLowerCase() === t) ?? null
+  const hits = repos.filter((r) => r.split('/')[1]?.toLowerCase() === t)
+  return hits.length === 1 ? hits[0] : null
+}
+
+// the first known project tag of a line, and the line without it; unknown #words stay in the text
+const takeTag = (line: string, repos: string[]): { repo: string | null; rest: string } => {
+  for (const m of line.matchAll(PROJECT_TAG)) {
+    const repo = repoOfTag(m[2], repos)
+    if (!repo || m.index === undefined) continue
+    const rest = `${line.slice(0, m.index)}${m[1]}${line.slice(m.index + m[0].length)}`
+    return { repo, rest: rest.replace(/\s{2,}/g, ' ').trim() }
+  }
+  return { repo: null, rest: line }
+}
+
 // A dump → the items it asks for: one per line, and one per target when a line lists several,
-// unless I said they go together. `repo` is the picked project, for bare #numbers.
-export const parseDump = (text: string, repo: string): DumpItem[] =>
-  text
-    .split('\n')
-    .map((l) => l.replace(BULLET, '').trim())
-    .filter(Boolean)
-    .flatMap(expand)
-    .map((title) => ({ title, ...refOf(title, repo) }))
+// unless I said they go together. The project of each line, first match wins: its own #tag, the
+// last tag alone on a line above it, the picked project, a watched PR link in it — else null, and
+// Haiku gets to guess.
+export const parseDump = (text: string, repos: string[], picked: string | null): DumpItem[] => {
+  let heading: string | null = null
+  const out: DumpItem[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(BULLET, '').trim()
+    if (!line) continue
+    const { repo: tagged, rest } = takeTag(line, repos)
+    if (tagged && !rest) {
+      heading = tagged // "#api" alone: the project of the lines below
+      continue
+    }
+    for (const title of expand(rest)) {
+      const url = title.match(PR_URL)
+      const linked = url && repos.includes(url[1]) ? url[1] : null
+      const repo = tagged ?? heading ?? picked ?? linked
+      out.push({ title, repo, ...dumpRef(title, repo) })
+    }
+  }
+  return out
+}
+
+// The #project being typed at the caret, for the dump's project dropdown: where its # sits and what
+// follows it. Only a tag in the making counts — `#2` is a PR, `issue#` is a word, `#app ` is done.
+export const tagQuery = (text: string, caret: number): { start: number; query: string } | null => {
+  const m = text.slice(0, caret).match(/(^|\s)#([A-Za-z][\w./-]*)?$/)
+  if (!m || m.index === undefined) return null
+  return { start: m.index + m[1].length, query: m[2] ?? '' }
+}
+
+// Watched projects matching what follows the #: names starting with it first, then names containing it
+export const tagSuggestions = (query: string, repos: string[]): string[] => {
+  const q = query.toLowerCase()
+  const score = (r: string) => {
+    const full = r.toLowerCase()
+    const short = full.split('/')[1] ?? full
+    if (short.startsWith(q) || full.startsWith(q)) return 0
+    return full.includes(q) ? 1 : 2
+  }
+  return repos
+    .map((r) => ({ r, s: score(r) }))
+    .filter((x) => x.s < 2)
+    .sort((a, b) => a.s - b.s)
+    .map((x) => x.r)
+}
+
+// what the dropdown writes after the #: the short name, unless another project shares it
+export const tagFor = (repo: string, repos: string[]): string => {
+  const short = repo.split('/')[1] ?? repo
+  const shared = repos.filter((r) => r.split('/')[1]?.toLowerCase() === short.toLowerCase()).length > 1
+  return shared ? repo : short
+}
+
+// Needs you, "which project?": the gate remembers where the item was headed, so naming the project
+// sends it on to Inbox or Queued as I dumped it
+const PROJECT_GATE = 'project:'
+export const projectGate = (to: StreamStatus): string => `${PROJECT_GATE}${to}`
+export const projectGateTarget = (gate: string | null): StreamStatus | null =>
+  gate?.startsWith(PROJECT_GATE) ? (gate.slice(PROJECT_GATE.length) as StreamStatus) : null

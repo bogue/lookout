@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CardMenuPopover, MENU_WIDTH } from '../components/CardMenu'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { actorIcon, RefChip, StreamPanel } from '../components/StreamPanel'
 import {
   addStreamItems,
+  askStreamProject,
   removeStreamItem,
   resetStreamPriority,
   setStreamOrders,
+  setStreamProject,
   setStreamStatus,
   streamItems,
 } from '../lib/db'
@@ -19,12 +21,17 @@ import {
   isNoMove,
   movedIds,
   parseDump,
+  projectGateTarget,
   STATUS_LABEL,
   STREAM_COLUMNS,
   type StreamActionId,
   sortColumn,
   streamActions,
+  tagFor,
+  tagQuery,
+  tagSuggestions,
 } from '../lib/stream'
+import { guessProjects } from '../lib/streamproject'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
 
@@ -99,9 +106,15 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
       {menuAt && <CardMenuPopover at={menuAt} onClose={closeMenu} actions={actions} onSelect={onAction} />}
       <p className="line-clamp-3 pr-7 text-sm font-medium leading-snug">{item.title}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-deck-400">
-        <span className="truncate text-deck-300">{item.repo.split('/')[1]}</span>
+        {item.repo ? (
+          <span className="truncate text-deck-300">{item.repo.split('/')[1]}</span>
+        ) : projectGateTarget(item.gate) ? (
+          <span className="rounded bg-amber-500/20 px-1 py-0.5 text-amber-300">which project?</span>
+        ) : (
+          <span className="animate-pulse text-deck-500">finding project…</span>
+        )}
         <RefChip item={item} />
-        {!QUIET.includes(item.status) && (
+        {!QUIET.includes(item.status) && !projectGateTarget(item.gate) && (
           <span className={`rounded px-1 py-0.5 ${TAG_CLASS[item.status] ?? 'bg-deck-700'}`}>
             {STATUS_LABEL[item.status]}
           </span>
@@ -114,89 +127,228 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
   )
 }
 
-// The dump: type or paste what I want done, one line each; a list of targets splits into one item
-// per target unless I say they go together. The preview shows what will be created.
+const ReturnKey = () => <kbd className="rounded bg-black/20 px-1 font-sans text-[10px] leading-4 text-white/80">⌘↵</kbd>
+
+// The dump: type or paste what I want done, one line each; a list of targets splits into one card
+// per target unless I say they go together. `#project` picks the project; with none, "All projects"
+// lets Haiku place each card, and the ones it can't place wait in Needs you.
 const Dump = ({
   repos,
   onAdd,
 }: {
   repos: WatchedRepo[]
-  onAdd: (repo: string, text: string, queue: boolean) => void
+  onAdd: (text: string, picked: string | null, queue: boolean) => void
 }) => {
   const [text, setText] = useState('')
-  const [repo, setRepo] = useState(repos[0]?.repo ?? '')
-  // a repo removed from Settings while picked falls back to the first one
-  const picked = repos.some((r) => r.repo === repo) ? repo : (repos[0]?.repo ?? '')
-  const preview = useMemo(() => parseDump(text, picked), [text, picked])
+  const [repo, setRepo] = useState('') // '' = All projects
+  const [queue, setQueue] = useState(false) // where the cards land: Inbox (false) or Queued
+  const [listOpen, setListOpen] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  const names = useMemo(() => repos.map((r) => r.repo), [repos])
+  // a repo removed from Settings while picked falls back to All; a single project needs no guessing
+  const picked = names.includes(repo) ? repo : names.length === 1 ? names[0] : null
+  const preview = useMemo(() => parseDump(text, names, picked), [text, names, picked])
+
+  // #project dropdown: follows the caret; Esc hides it for that # only
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [caret, setCaret] = useState(0)
+  const [active, setActive] = useState(0)
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null)
+  const tag = tagQuery(text, caret)
+  const suggestions = tag && tag.start !== dismissedAt ? tagSuggestions(tag.query, names) : []
+  const pendingCaret = useRef<number | null>(null)
+
+  // opening Stream is usually to dump something: the text box is ready to type in (once it exists —
+  // it only renders when a project is configured, and the config can land after the first paint)
+  const hasRepos = repos.length > 0
+  useEffect(() => {
+    if (hasRepos) inputRef.current?.focus()
+  }, [hasRepos])
+
+  // after a pick rewrites the text, put the caret right after the inserted tag
+  useEffect(() => {
+    if (pendingCaret.current === null || !inputRef.current) return
+    inputRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current)
+    setCaret(pendingCaret.current)
+    pendingCaret.current = null
+  })
+
+  const pickTag = (r: string) => {
+    if (!tag) return
+    const inserted = `#${tagFor(r, names)} `
+    setText(`${text.slice(0, tag.start)}${inserted}${text.slice(caret)}`)
+    pendingCaret.current = tag.start + inserted.length
+    setActive(0)
+  }
+
+  const trackCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart)
+    setActive(0)
+  }
+
+  // the card list closes on any click outside it
+  useEffect(() => {
+    if (!listOpen) return
+    const outside = (e: MouseEvent) => {
+      if (!listRef.current?.contains(e.target as Node)) setListOpen(false)
+    }
+    document.addEventListener('mousedown', outside)
+    return () => document.removeEventListener('mousedown', outside)
+  }, [listOpen])
 
   if (!repos.length)
     return <p className="text-sm text-deck-400">Add a project in Settings to start dumping work here.</p>
 
-  const add = (queue: boolean) => {
+  const add = () => {
     if (!preview.length) return
-    onAdd(picked, text, queue)
+    onAdd(text, picked, queue)
     setText('')
+    setListOpen(false)
   }
 
+  const lines = text.split('\n').length
+  const control = 'h-7 rounded-md text-xs' // every control in the footer row shares this height
+  const n = preview.length
+
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-deck-800 bg-deck-900 p-2">
-      <div className="flex items-start gap-2">
+    <div className="relative flex min-h-[130px] flex-col rounded-lg border border-grass-600/30 bg-grass-600/10 shadow-lg shadow-black/30 transition-colors focus-within:border-grass-500/70 focus-within:ring-1 focus-within:ring-grass-500/70">
+      {suggestions.length > 0 && (
+        <div
+          role="listbox"
+          aria-label="Projects"
+          className="absolute bottom-full left-3 z-30 mb-2 max-h-72 w-[30rem] max-w-[calc(100vw-4rem)] overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl"
+        >
+          {suggestions.map((r, i) => (
+            <button
+              key={r}
+              type="button"
+              role="option"
+              aria-selected={i === active}
+              // mousedown, not click: the textarea keeps focus and its caret
+              onMouseDown={(e) => {
+                e.preventDefault()
+                pickTag(r)
+              }}
+              onMouseEnter={() => setActive(i)}
+              className={`flex w-full cursor-pointer items-baseline gap-4 px-3 py-2 text-left text-sm ${i === active ? 'bg-deck-700' : ''}`}
+            >
+              <span className="shrink-0 whitespace-nowrap font-medium text-deck-100">#{r.split('/')[1]}</span>
+              <span className="ml-auto min-w-0 truncate text-xs text-deck-500">{r}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <textarea
+        ref={inputRef}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value)
+          trackCaret(e.target)
+        }}
+        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onBlur={() => setDismissedAt(tag?.start ?? null)}
+        onFocus={() => setDismissedAt(null)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && e.metaKey) {
+            e.preventDefault()
+            add()
+            return
+          }
+          if (!suggestions.length) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            const step = e.key === 'ArrowDown' ? 1 : -1
+            setActive((a) => (a + step + suggestions.length) % suggestions.length)
+          } else if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault()
+            pickTag(suggestions[Math.min(active, suggestions.length - 1)])
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            setDismissedAt(tag?.start ?? null)
+          }
+        }}
+        rows={Math.min(Math.max(lines, 1), 6)}
+        aria-label="What needs to be done"
+        placeholder="What needs to be done?  e.g. #my-project implement card 1,2,3,4"
+        className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 pt-3 pb-2 text-[17px] leading-relaxed text-deck-100 placeholder:text-deck-500 focus:outline-none"
+      />
+      <div className="flex items-center gap-2 border-t border-grass-600/20 px-3 py-2">
         <select
-          value={picked}
+          value={names.includes(repo) ? repo : ''}
           onChange={(e) => setRepo(e.target.value)}
           aria-label="Project"
-          className="shrink-0 cursor-pointer rounded-md border border-deck-700 bg-deck-800 px-2 py-1.5 text-sm text-deck-100 focus:border-deck-500 focus:outline-none"
+          title="The project of lines with no #project tag"
+          className={`${control} max-w-[16rem] cursor-pointer truncate border border-deck-700 bg-deck-800 px-2 text-deck-200 focus:border-deck-500 focus:outline-none`}
         >
+          <option value="">All projects</option>
           {repos.map((r) => (
             <option key={r.repo} value={r.repo}>
               {r.repo}
             </option>
           ))}
         </select>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && e.metaKey) {
-              e.preventDefault()
-              add(e.shiftKey)
-            }
-          }}
-          rows={text.includes('\n') ? 4 : 1}
-          placeholder="Dump what needs doing — one per line. “implement card 1,2,3,4” makes 4 items; add “in one branch” to keep them together.  ⌘↵ Inbox · ⇧⌘↵ Queued"
-          className="min-w-0 flex-1 resize-y rounded-md border border-deck-700 bg-deck-800/80 px-3 py-1.5 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => add(false)}
-          disabled={!preview.length}
-          className="shrink-0 cursor-pointer rounded-md bg-deck-700 px-3 py-1.5 text-sm hover:bg-deck-600 disabled:cursor-default disabled:opacity-40"
-        >
-          To Inbox
-        </button>
-        <button
-          type="button"
-          onClick={() => add(true)}
-          disabled={!preview.length}
-          className="shrink-0 cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
-        >
-          Queue
-        </button>
-      </div>
-      {preview.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5 px-1 text-xs text-deck-300">
-          <li className="text-deck-500">
-            {preview.length} item{preview.length > 1 ? 's' : ''}:
-          </li>
-          {preview.map((d, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: preview rows have no identity yet; two lines may read the same
-            <li key={i} className="rounded bg-deck-800 px-1.5 py-0.5">
-              {d.title}
-              {d.ref && <span className="ml-1 text-deck-500">→ {d.ref}</span>}
-            </li>
+        {/* where the cards land: a setting of the dump, not a second button competing with Add */}
+        <fieldset aria-label="Add to" className={`${control} flex border border-deck-700 bg-deck-800 p-0.5`}>
+          {(
+            [
+              [false, 'Inbox', 'Land in Inbox: I decide later'],
+              [true, 'Queued', 'Land in Queued: ready to be picked up'],
+            ] as const
+          ).map(([q, label, title]) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={queue === q}
+              title={title}
+              onClick={() => setQueue(q)}
+              className={`cursor-pointer rounded px-2.5 ${queue === q ? 'bg-deck-600 text-white' : 'text-deck-400 hover:text-deck-200'}`}
+            >
+              {label}
+            </button>
           ))}
-        </ul>
-      )}
+        </fieldset>
+        {/* Add, and — when the dump splits — a caret listing the cards it will create */}
+        <div ref={listRef} className="relative ml-auto flex">
+          <button
+            type="button"
+            onClick={add}
+            disabled={!n}
+            className={`flex h-9 cursor-pointer items-center gap-2 rounded-md bg-grass-600 px-4 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40 ${n > 1 ? 'rounded-r-none' : ''}`}
+          >
+            <ReturnKey />
+            {n > 1 ? `Add ${n} cards` : 'Add card'}
+          </button>
+          {n > 1 && (
+            <button
+              type="button"
+              onClick={() => setListOpen((o) => !o)}
+              aria-expanded={listOpen}
+              aria-label="Show the cards to create"
+              title="Show the cards to create"
+              className={`h-9 w-[25px] cursor-pointer rounded-md rounded-l-none text-xs border-l border-grass-700 bg-grass-600 text-white hover:bg-grass-500`}
+            >
+              {listOpen ? '▴' : '▾'}
+            </button>
+          )}
+          {listOpen && n > 1 && (
+            <div className="absolute right-0 bottom-full z-30 mb-2 max-h-80 w-96 overflow-y-auto rounded-lg border border-deck-700 bg-deck-900 py-1 shadow-xl">
+              <p className="px-3 py-1.5 text-xs text-deck-500">
+                {n} cards will be {queue ? 'queued' : 'added to your Inbox'}
+              </p>
+              <ol>
+                {preview.map((d, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: preview rows have no identity yet; two lines may read the same
+                  <li key={i} className="flex items-baseline gap-2 px-3 py-1.5 text-sm">
+                    <span className="w-4 shrink-0 text-right text-xs text-deck-500">{i + 1}</span>
+                    <span className="min-w-0 flex-1 truncate text-deck-100">{d.title}</span>
+                    {d.repo && <span className="shrink-0 text-xs text-deck-400">{d.repo.split('/')[1]}</span>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -233,8 +385,34 @@ export const Stream = ({ repos }: Props) => {
     await reload()
   }
 
-  const onAdd = (repo: string, text: string, queue: boolean) =>
-    write(() => addStreamItems(repo, parseDump(text, repo), queue ? 'queued' : 'idea'), 'add stream items')
+  const names = useMemo(() => repos.map((r) => r.repo), [repos])
+
+  const onAdd = (text: string, picked: string | null, queue: boolean) =>
+    write(() => addStreamItems(parseDump(text, names, picked), queue ? 'queued' : 'idea'), 'add stream items')
+
+  // Cards with no project yet (repo ''): Haiku places them; the ones it can't wait in Needs you.
+  // Runs after every reload, so a guess cut short by quitting the app is simply retried.
+  const guessing = useRef(new Set<string>())
+  // biome-ignore lint/correctness/useExhaustiveDependencies: write is recreated each render; items is the trigger
+  useEffect(() => {
+    const pending = items.filter((x) => x.repo === '' && x.status !== 'question' && !guessing.current.has(x.id))
+    if (!pending.length || !names.length) return
+    for (const x of pending) guessing.current.add(x.id)
+    const place = async () => {
+      const guesses = await guessProjects(
+        pending.map((x) => x.title),
+        names,
+      )
+      await write(async () => {
+        for (const [i, x] of pending.entries()) {
+          const repo = guesses[i]
+          await (repo ? setStreamProject(x, repo, 'lookout') : askStreamProject(x))
+        }
+      }, 'place stream items')
+      for (const x of pending) guessing.current.delete(x.id)
+    }
+    place()
+  }, [items, names])
 
   const onAction = (item: StreamItem, action: StreamActionId) => {
     const status = applyStreamAction(item.status, action)
@@ -289,10 +467,7 @@ export const Stream = ({ repos }: Props) => {
   const open = items.find((x) => x.id === openId) ?? null
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div className="shrink-0">
-        <Dump repos={repos} onAdd={onAdd} />
-      </div>
+    <div className="flex h-full flex-col">
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
         {STREAM_COLUMNS.map((col) => {
           const colItems = sortColumn(items, col.value)
@@ -377,12 +552,18 @@ export const Stream = ({ repos }: Props) => {
           )
         })}
       </div>
+      {/* the dump sits under the board, like a chat box */}
+      <div className="mx-[70px] my-[35px] shrink-0">
+        <Dump repos={repos} onAdd={onAdd} />
+      </div>
       {open && (
         <StreamPanel
           key={open.id}
           item={open}
           version={version}
+          repos={names}
           onAction={onAction}
+          onProject={(x, repo) => write(() => setStreamProject(x, repo, 'me'), 'set stream project')}
           onEdited={reload}
           onClose={() => setOpenId(null)}
         />

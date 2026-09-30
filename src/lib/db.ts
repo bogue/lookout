@@ -15,7 +15,7 @@ import type {
 import { type AlertScope, inScope } from './alerts'
 import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
-import { columnOf, type DumpItem } from './stream'
+import { columnOf, type DumpItem, dumpRef, projectGate, projectGateTarget } from './stream'
 import { rowToStreamEvent, rowToStreamItem, type StreamEventRow, type StreamItemRow } from './streamrow'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
@@ -502,7 +502,8 @@ export const streamEvents = async (itemId: string): Promise<StreamEvent[]> => {
 
 // A dump's items, in dump order: created_at is spaced by a millisecond so "oldest first" in Queued
 // keeps the order I typed them in even though they land in the same instant.
-export const addStreamItems = async (repo: string, items: DumpItem[], status: StreamStatus) => {
+// An item with no project yet is stored with repo '' until Haiku (or I) name one.
+export const addStreamItems = async (items: DumpItem[], status: StreamStatus) => {
   const d = await getDb()
   const base = Date.now()
   for (const [i, it] of items.entries()) {
@@ -511,10 +512,43 @@ export const addStreamItems = async (repo: string, items: DumpItem[], status: St
     await d.execute(
       `INSERT INTO stream_items (id, repo, title, ref_kind, ref, status, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-      [id, repo, it.title, it.refKind, it.ref, status, at],
+      [id, it.repo ?? '', it.title, it.refKind, it.ref, status, at],
     )
     await logStreamEvent(d, id, 'created', status === 'queued' ? 'dumped straight into Queued' : null)
   }
+}
+
+// Name an item's project (Haiku's guess, or my pick). A bare #2 in the title now names a PR. An item
+// that was asking "which project?" goes on to where it was headed when I dumped it.
+export const setStreamProject = async (item: StreamItem, repo: string, actor: 'me' | 'lookout') => {
+  const d = await getDb()
+  const ref = item.ref ? { refKind: item.refKind, ref: item.ref } : dumpRef(item.title, repo)
+  const target = projectGateTarget(item.gate)
+  if (target)
+    await d.execute(
+      'UPDATE stream_items SET repo = $1, ref_kind = $2, ref = $3, status = $4, gate = NULL, sort_order = NULL, updated_at = $5 WHERE id = $6',
+      [repo, ref.refKind, ref.ref, target, new Date().toISOString(), item.id],
+    )
+  else
+    await d.execute('UPDATE stream_items SET repo = $1, ref_kind = $2, ref = $3 WHERE id = $4', [
+      repo,
+      ref.refKind,
+      ref.ref,
+      item.id,
+    ])
+  await logStreamEvent(d, item.id, 'project', actor === 'lookout' ? `${repo} (guessed by Haiku)` : repo, actor)
+}
+
+// Haiku couldn't tell the project: the item waits in Needs you, remembering where it was headed
+export const askStreamProject = async (item: StreamItem) => {
+  const d = await getDb()
+  await d.execute('UPDATE stream_items SET status = $1, gate = $2, sort_order = NULL, updated_at = $3 WHERE id = $4', [
+    'question',
+    projectGate(item.status),
+    new Date().toISOString(),
+    item.id,
+  ])
+  await logStreamEvent(d, item.id, 'question', 'Which project? Haiku could not tell from the text', 'lookout')
 }
 
 // A status change. Entering another column resets the card's rank to `entryRank` there (stream.ts):

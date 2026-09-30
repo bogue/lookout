@@ -4,14 +4,73 @@ import {
   applyStreamAction,
   columnOf,
   dropStatus,
+  dumpRef,
   entryRank,
   isNoMove,
   movedIds,
   parseDump,
+  projectGate,
+  projectGateTarget,
   prRefOf,
   sortColumn,
   streamActions,
+  tagFor,
+  tagQuery,
+  tagSuggestions,
 } from './stream'
+
+describe('tagQuery', () => {
+  const at = (text: string) => tagQuery(text, text.length)
+
+  it('opens on a # just typed, at the start or after a space', () => {
+    expect(at('#')).toEqual({ start: 0, query: '' })
+    expect(at('fix login #')).toEqual({ start: 10, query: '' })
+  })
+
+  it('carries what follows the #', () => {
+    expect(at('fix #wa')).toEqual({ start: 4, query: 'wa' })
+    expect(at('#TinxHQ/wa')).toEqual({ start: 0, query: 'TinxHQ/wa' })
+  })
+
+  it('stays shut for a PR number, inside a word, or once the tag is done', () => {
+    expect(at('follow up on #2')).toBeNull()
+    expect(at('issue#')).toBeNull()
+    expect(at('#app ')).toBeNull()
+    expect(at('plain text')).toBeNull()
+  })
+
+  it('reads the text before the caret only', () => {
+    expect(tagQuery('#ap fix', 3)).toEqual({ start: 0, query: 'ap' })
+  })
+})
+
+describe('tagSuggestions', () => {
+  const repos = ['TinxHQ/wazo-mobile-native', 'TinxHQ/wazo-desktop', 'acme/api']
+
+  it('lists every project for a bare #', () => {
+    expect(tagSuggestions('', repos)).toEqual(repos)
+  })
+
+  it('ranks names starting with the query before names containing it, ignoring case', () => {
+    expect(tagSuggestions('WAZO', repos)).toEqual(['TinxHQ/wazo-mobile-native', 'TinxHQ/wazo-desktop'])
+    expect(tagSuggestions('mobile', repos)).toEqual(['TinxHQ/wazo-mobile-native'])
+    expect(tagSuggestions('a', repos)).toEqual(['acme/api', 'TinxHQ/wazo-mobile-native', 'TinxHQ/wazo-desktop'])
+  })
+
+  it('matches on the owner too', () => {
+    expect(tagSuggestions('acme/', repos)).toEqual(['acme/api'])
+  })
+})
+
+describe('tagFor', () => {
+  it('uses the short name when no other project shares it', () => {
+    expect(tagFor('acme/api', ['acme/api', 'owner/app'])).toBe('api')
+  })
+
+  it('uses owner/repo when the short name is ambiguous', () => {
+    expect(tagFor('acme/app', ['acme/app', 'owner/app'])).toBe('acme/app')
+  })
+})
 
 describe('prRefOf', () => {
   it('splits owner/repo#n into its PR', () => {
@@ -23,6 +82,8 @@ describe('prRefOf', () => {
   })
 })
 
+const REPOS = ['owner/app', 'acme/api']
+
 const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   id: 'a',
   repo: 'owner/app',
@@ -32,6 +93,7 @@ const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   refKind: null,
   ref: null,
   status: 'idea',
+  gate: null,
   sortOrder: null,
   priority: null,
   priorityReason: null,
@@ -198,7 +260,7 @@ describe('movedIds', () => {
 })
 
 describe('parseDump', () => {
-  const titles = (text: string) => parseDump(text, 'owner/app').map((d) => d.title)
+  const titles = (text: string) => parseDump(text, REPOS, 'owner/app').map((d) => d.title)
 
   it('makes one item per line, dropping blanks and bullets', () => {
     expect(titles('- fix login\n\n* bump deps\n3. write docs\n')).toEqual(['fix login', 'bump deps', 'write docs'])
@@ -231,29 +293,32 @@ describe('parseDump', () => {
   })
 
   it('reads a #number as a PR of the picked project', () => {
-    expect(parseDump('follow up on PR #2', 'owner/app')[0]).toMatchObject({ refKind: 'pr', ref: 'owner/app#2' })
+    expect(parseDump('follow up on PR #2', REPOS, 'owner/app')[0]).toMatchObject({ refKind: 'pr', ref: 'owner/app#2' })
   })
 
   it('reads a GitHub PR URL as that PR, whatever the picked project', () => {
-    expect(parseDump('review https://github.com/acme/api/pull/57 please', 'owner/app')[0]).toMatchObject({
+    expect(parseDump('review https://github.com/acme/api/pull/57 please', REPOS, 'owner/app')[0]).toMatchObject({
       refKind: 'pr',
       ref: 'acme/api#57',
     })
   })
 
   it('keeps any other URL as a plain reference', () => {
-    expect(parseDump('implement https://www.notion.so/acme/Card-123abc', 'owner/app')[0]).toMatchObject({
+    expect(parseDump('implement https://www.notion.so/acme/Card-123abc', REPOS, 'owner/app')[0]).toMatchObject({
       refKind: 'url',
       ref: 'https://www.notion.so/acme/Card-123abc',
     })
   })
 
   it('gives each split item its own PR reference', () => {
-    expect(parseDump('follow up on #2 and #3', 'owner/app').map((d) => d.ref)).toEqual(['owner/app#2', 'owner/app#3'])
+    expect(parseDump('follow up on #2 and #3', REPOS, 'owner/app').map((d) => d.ref)).toEqual([
+      'owner/app#2',
+      'owner/app#3',
+    ])
   })
 
   it('has no reference for plain text', () => {
-    expect(parseDump('bump deps', 'owner/app')[0]).toMatchObject({ refKind: null, ref: null })
+    expect(parseDump('bump deps', REPOS, 'owner/app')[0]).toMatchObject({ refKind: null, ref: null })
   })
 
   it.each([
@@ -275,10 +340,87 @@ describe('parseDump', () => {
   })
 
   it('drops trailing punctuation from a URL reference', () => {
-    expect(parseDump('see https://notion.so/Page-123, then ship', 'owner/app')[0].ref).toBe(
+    expect(parseDump('see https://notion.so/Page-123, then ship', REPOS, 'owner/app')[0].ref).toBe(
       'https://notion.so/Page-123',
     )
-    expect(parseDump('spec (https://notion.so/Spec).', 'owner/app')[0].ref).toBe('https://notion.so/Spec')
+    expect(parseDump('spec (https://notion.so/Spec).', REPOS, 'owner/app')[0].ref).toBe('https://notion.so/Spec')
+  })
+})
+
+describe('parseDump projects', () => {
+  const dump = (text: string, picked: string | null = null) =>
+    parseDump(text, REPOS, picked).map((d) => ({ title: d.title, repo: d.repo }))
+
+  it('files the line under the picked project', () => {
+    expect(dump('bump deps', 'acme/api')).toEqual([{ title: 'bump deps', repo: 'acme/api' }])
+  })
+
+  it('leaves the project open with All projects and no hint', () => {
+    expect(dump('bump deps')).toEqual([{ title: 'bump deps', repo: null }])
+  })
+
+  it('reads a #project tag, drops it from the title, and applies it to every split item', () => {
+    expect(dump('#app implement card 1,2')).toEqual([
+      { title: 'implement card 1', repo: 'owner/app' },
+      { title: 'implement card 2', repo: 'owner/app' },
+    ])
+  })
+
+  it('lets a line tag win over the picked project', () => {
+    expect(dump('fix login #api', 'owner/app')).toEqual([{ title: 'fix login', repo: 'acme/api' }])
+  })
+
+  it('matches a full owner/repo tag and ignores case', () => {
+    expect(dump('#Acme/API bump deps')).toEqual([{ title: 'bump deps', repo: 'acme/api' }])
+    expect(dump('#APP bump deps')).toEqual([{ title: 'bump deps', repo: 'owner/app' }])
+  })
+
+  it('makes a tag alone on its line the project of the lines after it', () => {
+    expect(dump('#api\nbump deps\nfix login\n#app\nwrite docs')).toEqual([
+      { title: 'bump deps', repo: 'acme/api' },
+      { title: 'fix login', repo: 'acme/api' },
+      { title: 'write docs', repo: 'owner/app' },
+    ])
+  })
+
+  it('keeps an unknown #word in the title', () => {
+    expect(dump('fix the #hotfix flow')).toEqual([{ title: 'fix the #hotfix flow', repo: null }])
+  })
+
+  it('never reads #2 as a project', () => {
+    expect(parseDump('follow up on #2', REPOS, 'owner/app')[0]).toMatchObject({ repo: 'owner/app', ref: 'owner/app#2' })
+  })
+
+  it('takes the project from a watched PR link when nothing else says', () => {
+    expect(dump('review https://github.com/acme/api/pull/57')).toEqual([
+      { title: 'review https://github.com/acme/api/pull/57', repo: 'acme/api' },
+    ])
+  })
+
+  it('has no PR reference for a bare #2 until the project is known', () => {
+    expect(parseDump('follow up on #2', REPOS, null)[0]).toMatchObject({ repo: null, refKind: null, ref: null })
+  })
+
+  it('matches nothing on a short name two projects share', () => {
+    expect(parseDump('#app bump', [...REPOS, 'other/app'], null)[0]).toMatchObject({ repo: null })
+  })
+})
+
+describe('dumpRef', () => {
+  it('resolves a bare #2 once the project is known', () => {
+    expect(dumpRef('follow up on #2', 'acme/api')).toEqual({ refKind: 'pr', ref: 'acme/api#2' })
+  })
+})
+
+describe('projectGate', () => {
+  it('encodes where an item goes once I name its project', () => {
+    expect(projectGateTarget(projectGate('queued'))).toBe('queued')
+    expect(projectGateTarget(projectGate('idea'))).toBe('idea')
+  })
+
+  it('is null for any other gate', () => {
+    expect(projectGateTarget('result')).toBeNull()
+    expect(projectGateTarget(null)).toBeNull()
   })
 })
 

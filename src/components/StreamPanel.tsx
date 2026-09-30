@@ -2,7 +2,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useState } from 'react'
 import { editStreamItem, streamEvents } from '../lib/db'
 import { logError } from '../lib/log'
-import { prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
+import { projectGateTarget, prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
 import { CloseButton } from './CloseButton'
@@ -12,7 +12,9 @@ import { SidePanel } from './SidePanel'
 type Props = {
   item: StreamItem
   version: number // bumped by the board after every write, so the feed re-reads
+  repos: string[] // watched owner/repo, for the project picker
   onAction: (item: StreamItem, action: StreamActionId) => void
+  onProject: (item: StreamItem, repo: string) => void
   onEdited: () => void
   onClose: () => void
 }
@@ -79,7 +81,7 @@ export const RefChip = ({ item }: { item: StreamItem }) => {
 
 // An item's side panel: edit it, act on it, and read its trail. The dispatch thread (phase 3) grows
 // out of this feed.
-export const StreamPanel = ({ item, version, onAction, onEdited, onClose }: Props) => {
+export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdited, onClose }: Props) => {
   const [title, setTitle] = useState(item.title)
   const [body, setBody] = useState(item.body ?? '')
   const [events, setEvents] = useState<StreamEvent[]>([])
@@ -121,7 +123,20 @@ export const StreamPanel = ({ item, version, onAction, onEdited, onClose }: Prop
                 className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-base font-medium text-white hover:border-deck-700 focus:border-deck-500 focus:outline-none"
               />
               <div className="mt-1 flex flex-wrap items-center gap-1.5 px-1 text-xs text-deck-400">
-                <span>{item.repo}</span>
+                <select
+                  value={item.repo}
+                  onChange={(e) => e.target.value && onProject(item, e.target.value)}
+                  disabled={item.status === 'running'}
+                  aria-label="Project"
+                  className="cursor-pointer rounded border border-transparent bg-transparent py-0.5 text-deck-300 hover:border-deck-700 focus:border-deck-500 focus:outline-none disabled:cursor-default"
+                >
+                  {!item.repo && <option value="">no project yet</option>}
+                  {repos.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
                 <RefChip item={item} />
                 <span className="rounded bg-deck-700 px-1 py-0.5">{STATUS_LABEL[item.status]}</span>
                 <span title={`created by ${item.createdBy}`}>{actorIcon(item.createdBy)}</span>
@@ -131,6 +146,23 @@ export const StreamPanel = ({ item, version, onAction, onEdited, onClose }: Prop
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {projectGateTarget(item.gate) && (
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                <p className="text-amber-200">Which project is this for? Haiku couldn't tell from the text.</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {repos.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => onProject(item, r)}
+                      className="cursor-pointer rounded bg-deck-700 px-2 py-1 text-xs hover:bg-deck-600"
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="flex flex-col gap-1 text-xs text-deck-400">
               Notes
               <textarea

@@ -191,13 +191,14 @@ export type StreamPriority = 'urgent' | 'high' | 'normal' | 'low'
 
 export type StreamItem = {
   id: string
-  repo: string // owner/repo — the project the item works in
+  repo: string // owner/repo — the project the item works in; '' while it isn't known yet
   groupId: string | null // items sharing one branch/worktree ("in one branch")
   title: string
   body: string | null // notes; the dump line itself is the title
   refKind: 'pr' | 'url' | null
   ref: string | null // owner/repo#2, or a Notion/Jira/any URL
   status: StreamStatus
+  gate: string | null // what a Needs you item waits on, e.g. project:<status> ("which project?")
   sortOrder: number | null // manual rank within its column; null = the column's default order
   priority: StreamPriority | null // Needs you criticality (Haiku, or set by me)
   priorityReason: string | null

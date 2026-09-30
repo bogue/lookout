@@ -12,6 +12,7 @@ export type StreamItemRow = {
   ref_kind: string | null
   ref: string | null
   status: string
+  gate: string | null
   sort_order: number | null
   priority: string | null
   priority_reason: string | null
@@ -46,6 +47,7 @@ export const rowToStreamItem = (r: StreamItemRow): StreamItem => ({
   refKind: oneOf(r.ref_kind, ['pr', 'url'], null),
   ref: r.ref,
   status: oneOf(r.status, Object.keys(STATUS_LABEL) as StreamStatus[], 'idea') ?? 'idea',
+  gate: r.gate,
   sortOrder: r.sort_order,
   priority: oneOf(r.priority, PRIORITIES, null),
   priorityReason: r.priority_reason,
