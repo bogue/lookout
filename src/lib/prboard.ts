@@ -125,6 +125,7 @@ export const toMyPr = (raw: GhMyPr, repo: string, repoPath: string | null): MyPr
     ciChecks: ciChecks(raw.statusCheckRollup ?? []),
     conflicts: hasConflicts(raw.mergeable),
     approved: hasApproval(humanReviews),
+    activityCount: null, // the list call doesn't carry comments; syncMyPrs fills it from the exchange
     doneAt: raw.mergedAt ?? raw.closedAt ?? null,
     snoozed: false, // syncMyPrs carries a stored snooze over
   }

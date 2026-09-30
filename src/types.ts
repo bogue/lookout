@@ -40,6 +40,7 @@ export type MyPr = {
   ciChecks: CiChecks
   conflicts: boolean // GitHub can't merge it as is (and its CI usually hasn't run)
   approved: boolean // at least one human reviewer approved (a ✓ before the title)
+  activityCount: number | null // human comments + reviews that aren't mine; null until first fetched
   doneAt: string | null // mergedAt / closedAt; Done keeps only the current day's cards
   snoozed: boolean // hidden until GitHub reports something new about the PR (myprs.ts)
 }

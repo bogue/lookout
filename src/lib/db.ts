@@ -259,13 +259,13 @@ export const upsertMyPr = async (pr: MyPr) => {
   await d.execute(
     `INSERT INTO my_prs (id, repo, repo_path, number, title, url, branch, pr_created_at, state, is_draft,
        human_review, bot_review, ci_state, derived_column, board_column, sort_order, done_at, updated_at, snoozed,
-       ci_failed, ci_total, conflicts, approved)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+       ci_failed, ci_total, conflicts, approved, activity_count)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
      ON CONFLICT(id) DO UPDATE SET
        repo_path = $3, title = $5, url = $6, branch = $7, state = $9, is_draft = $10,
        human_review = $11, bot_review = $12, ci_state = $13, derived_column = $14, board_column = $15,
        done_at = $17, updated_at = $18, snoozed = $19, ci_failed = $20, ci_total = $21, conflicts = $22,
-       approved = $23`,
+       approved = $23, activity_count = $24`,
     [
       pr.id,
       pr.repo,
@@ -290,6 +290,7 @@ export const upsertMyPr = async (pr: MyPr) => {
       pr.ciChecks?.total ?? null,
       pr.conflicts ? 1 : 0,
       pr.approved ? 1 : 0,
+      pr.activityCount,
     ],
   )
 }

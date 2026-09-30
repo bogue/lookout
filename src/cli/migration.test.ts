@@ -191,3 +191,19 @@ describe('019_approved', () => {
     expect(cols).toContain('approved')
   })
 })
+
+describe('020_my_pr_activity', () => {
+  it('adds an activity count to my PRs, unset for existing rows', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'lookout-migrate-')), 'lookout.db')
+    const h = new DatabaseSync(path)
+    applyThrough(h, 19)
+    h.prepare(
+      `INSERT INTO my_prs (id, repo, number, title, url, branch, pr_created_at, derived_column, board_column, updated_at)
+       VALUES ('owner/repo#1', 'owner/repo', 1, 't', 'u', 'b', '2026-01-01T00:00:00Z', 'waiting', 'waiting', '2026-01-01T00:00:00Z')`,
+    ).run()
+    apply(h, '020_my_pr_activity.sql')
+    const pr = h.prepare('SELECT activity_count FROM my_prs').get()
+    h.close()
+    expect(pr).toEqual({ activity_count: null })
+  })
+})

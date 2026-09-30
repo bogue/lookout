@@ -20,7 +20,7 @@ vi.mock('./notify', () => ({ notify: vi.fn() }))
 vi.mock('./proverrides', () => ({ migrateLegacyPrStore: vi.fn(async () => ({ columns: {}, orders: {} })) }))
 
 import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, upsertMyPr } from './db'
-import { listMyPrs } from './gh'
+import { fetchPrExchange, listMyPrs, type PrExchange } from './gh'
 import { syncMyPrs } from './myprs'
 import { migrateLegacyPrStore } from './proverrides'
 
@@ -75,9 +75,20 @@ const storedPr = (o: Partial<MyPr> = {}): MyPr => ({
   ciChecks: null,
   conflicts: false,
   approved: false,
+  activityCount: null,
   doneAt: null,
   snoozed: false,
   ...o,
+})
+
+const exchange = (comments: { author: { login?: string; is_bot?: boolean } }[]): PrExchange => ({
+  count: comments.length,
+  ciState: null,
+  ciChecks: null,
+  conflicts: false,
+  reviews: [],
+  comments: comments.map((c) => ({ ...c, createdAt: '2026-09-02T00:00:00Z' })),
+  commits: [],
 })
 
 // the row syncMyPrs wrote for a given PR id
@@ -275,6 +286,40 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
     vi.mocked(listMyPrs).mockResolvedValue([ghPr({ statusCheckRollup: [{ conclusion: 'SUCCESS' }] })])
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)?.snoozed).toBe(true)
+  })
+
+  it('wakes on a new comment even when the review verdict stays the same', async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 1 })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'alice' } }, { author: { login: 'bob' } }]))
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: false, activityCount: 2 })
+  })
+
+  it("doesn't wake on my own comments or a bot's", async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 0 })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(
+      exchange([{ author: { login: 'me' } }, { author: { login: 'codecov[bot]' } }, { author: { login: 'x', is_bot: true } }]),
+    )
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 0 })
+  })
+
+  it('takes the first count as a baseline without waking', async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: null })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'alice' } }]))
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 1 })
+  })
+
+  it('keeps the stored count when the fetch fails', async () => {
+    vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 3 })])
+    vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
+    vi.mocked(fetchPrExchange).mockRejectedValueOnce(new Error('network'))
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 3 })
   })
 
   it('wakes when the PR runs into merge conflicts', async () => {
