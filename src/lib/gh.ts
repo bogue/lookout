@@ -261,7 +261,9 @@ export const fetchAuthorKinds = async (repo: string, prNumbers: number[]): Promi
     .map((n) => `p${n}: pullRequest(number: ${n}) { reviews(last: 100) { ${nodes} } comments(last: 100) { ${nodes} } }`)
     .join(' ')
   const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${prs} } }`
-  const out = JSON.parse(await gh(['api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`]))
+  const out = JSON.parse(
+    await gh(['api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`]),
+  )
   type Node = { author: { __typename: string; login: string } | null }
   type Pr = { reviews?: { nodes: Node[] }; comments?: { nodes: Node[] } } | null
   for (const pr of Object.values((out.data?.repository ?? {}) as Record<string, Pr>)) {
@@ -292,6 +294,10 @@ const listMyPrsIn = async (repo: string, me: string, state: string, limit: numbe
       MY_PR_FIELDS,
     ]),
   )
+
+// One of my PRs, in the list call's shape: what a snooze takes as its baseline (see snoozeMyPr)
+export const fetchMyPr = async (repo: string, prNumber: number): Promise<GhMyPr> =>
+  JSON.parse(await gh(['pr', 'view', String(prNumber), '--repo', repo, '--json', MY_PR_FIELDS]))
 
 // Open and recently-closed PRs, asked for separately on purpose. A single `--state all --limit 50`
 // is newest-first, so in a busy repo merge history fills the window and pushes long-lived open PRs

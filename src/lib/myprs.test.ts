@@ -10,21 +10,31 @@ vi.mock('./db', () => ({
   pruneDoneMyPrs: vi.fn(),
   pruneMyPrRepos: vi.fn(),
   saveGhLogins: vi.fn(async () => {}),
+  setMyPrSnoozed: vi.fn(),
   syncAlerts: vi.fn(async () => []),
   upsertMyPr: vi.fn(),
 }))
 vi.mock('./gh', () => ({
   fetchAuthorKinds: vi.fn(async () => new Map()),
   fetchLogin: vi.fn(),
+  fetchMyPr: vi.fn(),
   fetchPrExchange: vi.fn(async () => ({ count: 0, ciState: null, reviews: [], comments: [], commits: [] })),
   listMyPrs: vi.fn(),
 }))
 vi.mock('./notify', () => ({ notify: vi.fn() }))
 vi.mock('./proverrides', () => ({ migrateLegacyPrStore: vi.fn(async () => ({ columns: {}, orders: {} })) }))
 
-import { allMyPrs, dropMyPrsMissingFrom, ghLogins, pruneDoneMyPrs, saveGhLogins, upsertMyPr } from './db'
-import { fetchAuthorKinds, fetchPrExchange, listMyPrs, type PrExchange } from './gh'
-import { syncMyPrs } from './myprs'
+import {
+  allMyPrs,
+  dropMyPrsMissingFrom,
+  ghLogins,
+  pruneDoneMyPrs,
+  saveGhLogins,
+  setMyPrSnoozed,
+  upsertMyPr,
+} from './db'
+import { fetchAuthorKinds, fetchMyPr, fetchPrExchange, listMyPrs, type PrExchange } from './gh'
+import { snoozeMyPr, syncMyPrs } from './myprs'
 import { migrateLegacyPrStore } from './proverrides'
 
 const REPO = 'owner/repo'
@@ -295,7 +305,9 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
   it('wakes on a new comment even when the review verdict stays the same', async () => {
     vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 1 })])
     vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
-    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'alice' } }, { author: { login: 'bob' } }]))
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(
+      exchange([{ author: { login: 'alice' } }, { author: { login: 'bob' } }]),
+    )
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)).toMatchObject({ snoozed: false, activityCount: 2 })
   })
@@ -304,7 +316,11 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
     vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, activityCount: 0 })])
     vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
     vi.mocked(fetchPrExchange).mockResolvedValueOnce(
-      exchange([{ author: { login: 'me' } }, { author: { login: 'codecov[bot]' } }, { author: { login: 'x', is_bot: true } }]),
+      exchange([
+        { author: { login: 'me' } },
+        { author: { login: 'codecov[bot]' } },
+        { author: { login: 'x', is_bot: true } },
+      ]),
     )
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 0 })
@@ -344,7 +360,9 @@ describe('syncMyPrs — a snoozed card sleeps until GitHub has news', () => {
 describe('syncMyPrs — bots gh reports as plain logins', () => {
   it("treats a GraphQL-confirmed bot's review as a bot's, not a person's", async () => {
     vi.mocked(fetchAuthorKinds).mockResolvedValueOnce(new Map([['cursor', true]]))
-    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ latestReviews: [{ author: { login: 'cursor' }, state: 'COMMENTED' }] })])
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ latestReviews: [{ author: { login: 'cursor' }, state: 'COMMENTED' }] }),
+    ])
     await syncMyPrs(config([REPO]))
     expect(written(`${REPO}#1`)).toMatchObject({ humanReview: null, botReview: 'commented', column: 'waiting' })
   })
@@ -361,7 +379,9 @@ describe('syncMyPrs — bots gh reports as plain logins', () => {
   it('reads a stored bot as a bot without asking GitHub again', async () => {
     vi.mocked(ghLogins).mockResolvedValue(new Map([['linter', true]]))
     vi.mocked(allMyPrs).mockResolvedValue([storedPr({ snoozed: true, botReview: 'commented' })])
-    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ latestReviews: [{ author: { login: 'linter' }, state: 'COMMENTED' }] })])
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ latestReviews: [{ author: { login: 'linter' }, state: 'COMMENTED' }] }),
+    ])
     await syncMyPrs(config([REPO]))
     expect(fetchAuthorKinds).not.toHaveBeenCalled()
     expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, humanReview: null, botReview: 'commented' })
@@ -382,7 +402,12 @@ describe('syncMyPrs — bots gh reports as plain logins', () => {
   })
 
   it('stores what it learned, people and logins the answer left out included', async () => {
-    vi.mocked(fetchAuthorKinds).mockResolvedValueOnce(new Map([['bob', false], ['cursor', true]]))
+    vi.mocked(fetchAuthorKinds).mockResolvedValueOnce(
+      new Map([
+        ['bob', false],
+        ['cursor', true],
+      ]),
+    )
     vi.mocked(listMyPrs).mockResolvedValue([ghPr()])
     vi.mocked(fetchPrExchange).mockResolvedValueOnce(
       exchange([{ author: { login: 'bob' } }, { author: { login: 'cursor' } }, { author: { login: 'old' } }]),
@@ -399,10 +424,56 @@ describe('syncMyPrs — bots gh reports as plain logins', () => {
 
   it('stores nothing when the lookup fails, so the next sync asks again', async () => {
     vi.mocked(fetchAuthorKinds).mockRejectedValueOnce(new Error('graphql'))
-    vi.mocked(listMyPrs).mockResolvedValue([ghPr({ latestReviews: [{ author: { login: 'linter' }, state: 'COMMENTED' }] })])
+    vi.mocked(listMyPrs).mockResolvedValue([
+      ghPr({ latestReviews: [{ author: { login: 'linter' }, state: 'COMMENTED' }] }),
+    ])
     await syncMyPrs(config([REPO]))
     expect(saveGhLogins).not.toHaveBeenCalled()
     await syncMyPrs(config([REPO]))
     expect(fetchAuthorKinds).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('snoozeMyPr — the snooze is the baseline', () => {
+  it("doesn't wake on the next sync over a verdict only the panel's timeline saw", async () => {
+    // panel stored the timeline's verdict; the list call sees a pending re-review request instead
+    const panel = storedPr({ humanReview: 'changes_requested', derivedColumn: 'in_review', column: 'in_review' })
+    const listed = ghPr({
+      latestReviews: [{ author: { login: 'alice' }, state: 'CHANGES_REQUESTED' }],
+      reviewRequests: [{ login: 'alice' }],
+    })
+    vi.mocked(fetchMyPr).mockResolvedValueOnce(listed)
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'alice' } }]))
+    await snoozeMyPr(panel, 'me')
+    const baseline = written(`${REPO}#1`)
+    expect(baseline).toMatchObject({ snoozed: true, humanReview: null, activityCount: 1 })
+
+    vi.mocked(allMyPrs).mockResolvedValue([baseline as MyPr])
+    vi.mocked(listMyPrs).mockResolvedValue([listed])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchange([{ author: { login: 'alice' } }]))
+    await syncMyPrs(config([REPO]))
+    expect(written(`${REPO}#1`)?.snoozed).toBe(true)
+  })
+
+  it('counts the comments there at snooze time, not those of the last sync', async () => {
+    vi.mocked(fetchMyPr).mockResolvedValueOnce(ghPr())
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(
+      exchange([{ author: { login: 'alice' } }, { author: { login: 'bob' } }]),
+    )
+    await snoozeMyPr(storedPr({ activityCount: 1 }), 'me')
+    expect(written(`${REPO}#1`)).toMatchObject({ snoozed: true, activityCount: 2 })
+  })
+
+  it('keeps my placement and drag position', async () => {
+    vi.mocked(fetchMyPr).mockResolvedValueOnce(ghPr())
+    await snoozeMyPr(storedPr({ column: 'ready', sortOrder: 30 }), 'me')
+    expect(written(`${REPO}#1`)).toMatchObject({ column: 'ready', sortOrder: 30 })
+  })
+
+  it('still snoozes when GitHub is unreachable', async () => {
+    vi.mocked(fetchMyPr).mockRejectedValueOnce(new Error('network'))
+    await snoozeMyPr(storedPr(), 'me')
+    expect(upsertMyPr).not.toHaveBeenCalled()
+    expect(setMyPrSnoozed).toHaveBeenCalledWith(`${REPO}#1`, true)
   })
 })

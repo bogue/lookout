@@ -8,13 +8,14 @@ import {
   pruneDoneMyPrs,
   pruneMyPrRepos,
   saveGhLogins,
+  setMyPrSnoozed,
   syncAlerts,
   upsertMyPr,
 } from './db'
-import { fetchAuthorKinds, fetchLogin, fetchPrExchange, type GhMyPr, listMyPrs, type PrExchange } from './gh'
+import { fetchAuthorKinds, fetchLogin, fetchMyPr, fetchPrExchange, type GhMyPr, listMyPrs, type PrExchange } from './gh'
 import { logError } from './log'
 import { notify } from './notify'
-import { isBot, isBoardable, toMyPr } from './prboard'
+import { isBoardable, isBot, toMyPr } from './prboard'
 import { resolveColumn } from './prcolumns'
 import { type LegacyPrStore, migrateLegacyPrStore } from './proverrides'
 import { startOfToday } from './time'
@@ -32,6 +33,8 @@ const hasNews = (prev: MyPr, fresh: MyPr): boolean =>
   prev.conflicts !== fresh.conflicts ||
   prev.state !== fresh.state ||
   prev.derivedColumn !== fresh.derivedColumn
+
+const EXCHANGE_BATCH = 4 // exchange fetches in flight at once, per repo
 
 // login -> is a bot, for every review/comment author already classified (gh_logins, see fetchAuthorKinds)
 type Logins = Map<string, boolean>
@@ -87,6 +90,31 @@ const learnLogins = async (
   await saveGhLogins(learned).catch((e) => logError('myprs', e, 'save gh logins')) // still used this pass
 }
 
+// Snoozing takes a fresh baseline for hasNews. What the last sync stored can be 10 min old (a comment
+// just read in the panel would wake the card), and the panel's timeline refresh stores verdicts the
+// list call doesn't share (it can't see a pending re-review request). Either woke the card on the next
+// sync. GitHub unreachable: flip the flag alone, as before.
+export const snoozeMyPr = async (pr: MyPr, me: string) => {
+  try {
+    const [raw, x, logins] = await Promise.all([
+      fetchMyPr(pr.repo, pr.number),
+      fetchPrExchange(pr.repo, pr.number, me),
+      ghLogins(),
+    ])
+    const fresh = toMyPr(markBots(raw, logins), pr.repo, pr.repoPath)
+    await upsertMyPr({
+      ...fresh,
+      column: resolveColumn(pr.column, pr.derivedColumn, fresh.derivedColumn),
+      sortOrder: pr.sortOrder,
+      activityCount: humanActivity(x, me, logins), // an unclassified bot only lowers the next count
+      snoozed: true,
+    })
+  } catch (e) {
+    logError('myprs', e, `snooze baseline ${pr.id}`)
+    await setMyPrSnoozed(pr.id, true)
+  }
+}
+
 // One pass: list the PRs I authored across watched repos and reconcile them into `my_prs`.
 //
 // Reconciliation is per repo, not global: a repo whose `gh` call throws keeps every row it already
@@ -126,14 +154,19 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
     listed.push(repo)
     // exchanges first: their authors are what the bot lookup needs before any PR is classified
     const open = raw.filter((r) => r.state === 'OPEN')
-    for (const r of open) {
-      const id = `${repo}#${r.number}`
-      const x = await fetchPrExchange(repo, r.number, me).catch((e) => {
-        console.error(`my-PR activity fetch failed for ${id}:`, e)
-        logError('myprs', e, `activity ${id}`)
-        return null
-      })
-      if (x) exchanges.set(id, x)
+    // a few at a time: one serial `gh pr view` per open PR made the sync grow with the PR count
+    for (let i = 0; i < open.length; i += EXCHANGE_BATCH) {
+      await Promise.all(
+        open.slice(i, i + EXCHANGE_BATCH).map(async (r) => {
+          const id = `${repo}#${r.number}`
+          const x = await fetchPrExchange(repo, r.number, me).catch((e) => {
+            console.error(`my-PR activity fetch failed for ${id}:`, e)
+            logError('myprs', e, `activity ${id}`)
+            return null
+          })
+          if (x) exchanges.set(id, x)
+        }),
+      )
     }
     await learnLogins(repo, open, exchanges, me, logins)
     const seen: string[] = []
@@ -175,11 +208,13 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
 const refreshMyPrAlerts = async (prs: MyPr[], repos: string[], me: string, exchanges: Map<string, PrExchange>) => {
   const derived: Alert[] = []
   for (const pr of prs.filter((p) => p.state === 'open' && p.humanReview !== null)) {
-    const x = exchanges.get(pr.id) ?? await fetchPrExchange(pr.repo, pr.number, me).catch((e) => {
-      console.error(`my-PR alert check failed for ${pr.id}:`, e)
-      logError('myprs', e, `alert check ${pr.id}`)
-      return null
-    })
+    const x =
+      exchanges.get(pr.id) ??
+      (await fetchPrExchange(pr.repo, pr.number, me).catch((e) => {
+        console.error(`my-PR alert check failed for ${pr.id}:`, e)
+        logError('myprs', e, `alert check ${pr.id}`)
+        return null
+      }))
     if (x) derived.push(...myPrAlerts(pr, x, me))
   }
   const fresh = await syncAlerts({ kinds: MY_PR_ALERT_KINDS, repos }, derived)

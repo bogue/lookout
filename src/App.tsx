@@ -46,7 +46,7 @@ import {
 import type { TimelineSummary } from './lib/feed'
 import { resumeInGhostty } from './lib/ghostty'
 import { logError, logWarn, setLogEnabled } from './lib/log'
-import { syncMyPrs } from './lib/myprs'
+import { snoozeMyPr, syncMyPrs } from './lib/myprs'
 import { onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
@@ -271,7 +271,9 @@ const App = () => {
   // one card's snooze, on whichever board it lives
   const snoozeCard = async (id: string, board: ButtonBoard, snoozed: boolean) => {
     if (board === 'pr') {
-      await setMyPrSnoozed(id, snoozed)
+      const pr = myPrs.find((p) => p.id === id)
+      if (snoozed && pr) await snoozeMyPr(pr, config.githubUser)
+      else await setMyPrSnoozed(id, snoozed)
       await reloadMyPrs()
     } else {
       await setSnoozed(id, snoozed)
