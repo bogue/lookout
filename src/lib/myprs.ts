@@ -1,8 +1,17 @@
 import type { Alert, Config, MyPr } from '../types'
 import { MY_PR_ALERT_KINDS, myPrAlerts } from './alerts'
 import { getConfig, setGithubUser } from './config'
-import { allMyPrs, dropMyPrsMissingFrom, pruneDoneMyPrs, pruneMyPrRepos, syncAlerts, upsertMyPr } from './db'
-import { fetchBotLogins, fetchLogin, fetchPrExchange, type GhMyPr, listMyPrs, type PrExchange } from './gh'
+import {
+  allMyPrs,
+  dropMyPrsMissingFrom,
+  ghLogins,
+  pruneDoneMyPrs,
+  pruneMyPrRepos,
+  saveGhLogins,
+  syncAlerts,
+  upsertMyPr,
+} from './db'
+import { fetchAuthorKinds, fetchLogin, fetchPrExchange, type GhMyPr, listMyPrs, type PrExchange } from './gh'
 import { logError } from './log'
 import { notify } from './notify'
 import { isBot, isBoardable, toMyPr } from './prboard'
@@ -24,23 +33,59 @@ const hasNews = (prev: MyPr, fresh: MyPr): boolean =>
   prev.state !== fresh.state ||
   prev.derivedColumn !== fresh.derivedColumn
 
-// Bot logins seen so far (see fetchBotLogins). Kept across passes: an account doesn't stop being a bot,
-// and a failed lookup must not turn Cursor back into a person — that flips its verdict and wakes cards.
-const knownBots = new Set<string>()
+// login -> is a bot, for every review/comment author already classified (gh_logins, see fetchAuthorKinds)
+type Logins = Map<string, boolean>
+type Author = { login?: string; is_bot?: boolean } | null
 
-const botAware = (author: { login?: string; is_bot?: boolean } | null) =>
-  author?.login && knownBots.has(author.login) ? { ...author, is_bot: true } : author
+const botAware = (author: Author, logins: Logins) =>
+  author?.login && logins.get(author.login) ? { ...author, is_bot: true } : author
 
-// gh's authors carry no bot flag; set it from knownBots so isBot (prboard.ts) sees what GitHub does
-const markBots = (raw: GhMyPr): GhMyPr => ({
+// gh's authors carry no bot flag; set it from gh_logins so isBot (prboard.ts) sees what GitHub does
+const markBots = (raw: GhMyPr, logins: Logins): GhMyPr => ({
   ...raw,
-  latestReviews: raw.latestReviews.map((r) => ({ ...r, author: botAware(r.author) as GhMyPr['latestReviews'][number]['author'] })),
+  latestReviews: raw.latestReviews.map((r) => ({
+    ...r,
+    author: botAware(r.author, logins) as GhMyPr['latestReviews'][number]['author'],
+  })),
 })
 
 // Comments + reviews from people other than me. Bots are left out: Cursor re-reviews and CI bots post
 // on every push, which would wake a snoozed card on each commit just like CI did.
-const humanActivity = (x: PrExchange, me: string): number =>
-  [...x.comments, ...x.reviews].filter((c) => c.author?.login !== me && !isBot(botAware(c.author))).length
+const humanActivity = (x: PrExchange, me: string, logins: Logins): number =>
+  [...x.comments, ...x.reviews].filter((c) => c.author?.login !== me && !isBot(botAware(c.author, logins))).length
+
+// Ask GraphQL only about authors never classified, and only on the PRs where they appear: once
+// gh_logins fills up, most syncs make no call. A login the answer leaves out (past its last 100
+// reviews/comments) is stored as a person, so it isn't asked about again. A failed lookup stores
+// nothing: those logins read as people this pass and are asked about on the next.
+const learnLogins = async (
+  repo: string,
+  open: GhMyPr[],
+  exchanges: Map<string, PrExchange>,
+  me: string,
+  logins: Logins,
+) => {
+  const fresh = new Map<number, Set<string>>() // PR number -> logins not classified yet
+  for (const r of open) {
+    const x = exchanges.get(`${repo}#${r.number}`)
+    const authors: Author[] = [...r.latestReviews, ...(x?.reviews ?? []), ...(x?.comments ?? [])].map((a) => a.author)
+    for (const a of authors) {
+      if (!a?.login || a.login === me || isBot(a) || logins.has(a.login)) continue
+      fresh.set(r.number, (fresh.get(r.number) ?? new Set()).add(a.login))
+    }
+  }
+  if (!fresh.size) return
+  let kinds: Logins
+  try {
+    kinds = await fetchAuthorKinds(repo, [...fresh.keys()])
+  } catch (e) {
+    logError('myprs', e, `bot lookup ${repo}`)
+    return
+  }
+  const learned: Logins = new Map([...fresh.values()].flatMap((s) => [...s]).map((l) => [l, kinds.get(l) ?? false]))
+  for (const [l, bot] of learned) logins.set(l, bot)
+  await saveGhLogins(learned).catch((e) => logError('myprs', e, 'save gh logins')) // still used this pass
+}
 
 // One pass: list the PRs I authored across watched repos and reconcile them into `my_prs`.
 //
@@ -65,6 +110,10 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
   const legacy: LegacyPrStore = await migrateLegacyPrStore().catch(() => ({ columns: {}, orders: {} }))
   const listed: string[] = [] // repos that answered; a failed one keeps its alerts untouched
   const exchanges = new Map<string, PrExchange>() // fetched once per open PR, shared with the alert pass
+  const logins: Logins = await ghLogins().catch((e) => {
+    logError('myprs', e, 'load gh logins') // every author gets asked about again; no worse than a first run
+    return new Map()
+  })
   for (const { repo, path } of cfg.repos) {
     let raw: Awaited<ReturnType<typeof listMyPrs>>
     try {
@@ -75,27 +124,28 @@ export const syncMyPrs = async (config?: Config): Promise<MyPr[]> => {
       continue
     }
     listed.push(repo)
-    const open = raw.filter((r) => r.state === 'OPEN').map((r) => r.number)
-    for (const b of await fetchBotLogins(repo, open).catch((e) => {
-      logError('myprs', e, `bot lookup ${repo}`) // keep the bots already known
-      return []
-    }))
-      knownBots.add(b)
+    // exchanges first: their authors are what the bot lookup needs before any PR is classified
+    const open = raw.filter((r) => r.state === 'OPEN')
+    for (const r of open) {
+      const id = `${repo}#${r.number}`
+      const x = await fetchPrExchange(repo, r.number, me).catch((e) => {
+        console.error(`my-PR activity fetch failed for ${id}:`, e)
+        logError('myprs', e, `activity ${id}`)
+        return null
+      })
+      if (x) exchanges.set(id, x)
+    }
+    await learnLogins(repo, open, exchanges, me, logins)
     const seen: string[] = []
     for (const r of raw) {
-      const fresh = toMyPr(markBots(r), repo, path)
+      const fresh = toMyPr(markBots(r, logins), repo, path)
       if (!isBoardable(fresh, today)) continue // merged/closed before today: not this board's business
       const prev = stored.get(fresh.id)
       seen.push(fresh.id)
       if (fresh.state === 'open') {
-        const x = await fetchPrExchange(repo, fresh.number, me).catch((e) => {
-          console.error(`my-PR activity fetch failed for ${fresh.id}:`, e)
-          logError('myprs', e, `activity ${fresh.id}`)
-          return null
-        })
-        if (x) exchanges.set(fresh.id, x)
+        const x = exchanges.get(fresh.id)
         // a failed fetch keeps the stored count: no baseline lost, no wake from a blip
-        fresh.activityCount = x ? humanActivity(x, me) : (prev?.activityCount ?? null)
+        fresh.activityCount = x ? humanActivity(x, me, logins) : (prev?.activityCount ?? null)
       }
       if (prev) {
         // GitHub only gets to move the card when its own verdict changed (see prcolumns.ts)

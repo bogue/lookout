@@ -251,10 +251,10 @@ export type GhMyPr = {
 // gh's --json flattens every review and comment author to {login}, dropping GitHub's Bot type: a Cursor
 // review arrives as "cursor", which isBot can't tell from a person (the REST timeline the feed reads
 // says "cursor[bot]", so the two disagreed on every verdict). GraphQL still carries the type, so ask it
-// which authors on these PRs are bots — one call per repo, all PRs aliased into it.
-export const fetchBotLogins = async (repo: string, prNumbers: number[]): Promise<Set<string>> => {
-  const bots = new Set<string>()
-  if (!prNumbers.length) return bots
+// about the authors on these PRs — one call per repo, all PRs aliased into it. login -> is a bot.
+export const fetchAuthorKinds = async (repo: string, prNumbers: number[]): Promise<Map<string, boolean>> => {
+  const kinds = new Map<string, boolean>()
+  if (!prNumbers.length) return kinds
   const [owner, name] = repo.split('/')
   const nodes = 'nodes { author { __typename login } }'
   const prs = prNumbers
@@ -266,10 +266,10 @@ export const fetchBotLogins = async (repo: string, prNumbers: number[]): Promise
   type Pr = { reviews?: { nodes: Node[] }; comments?: { nodes: Node[] } } | null
   for (const pr of Object.values((out.data?.repository ?? {}) as Record<string, Pr>)) {
     for (const n of [...(pr?.reviews?.nodes ?? []), ...(pr?.comments?.nodes ?? [])]) {
-      if (n.author?.__typename === 'Bot') bots.add(n.author.login)
+      if (n.author) kinds.set(n.author.login, n.author.__typename === 'Bot')
     }
   }
-  return bots
+  return kinds
 }
 
 const MY_PR_FIELDS =

@@ -218,6 +218,12 @@ pub fn run() {
                             sql: include_str!("../migrations/020_my_pr_activity.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 21,
+                            description: "bot or person, per github login",
+                            sql: include_str!("../migrations/021_gh_logins.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

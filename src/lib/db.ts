@@ -347,6 +347,24 @@ export const dropMyPrsMissingFrom = async (repo: string, keepIds: string[]) => {
   await d.execute(`DELETE FROM my_prs WHERE repo = $1 AND id NOT IN (${placeholders})`, [repo, ...keepIds])
 }
 
+// ---- gh_logins: which review/comment authors are bots (see migration 021) --------------------
+
+export const ghLogins = async (): Promise<Map<string, boolean>> => {
+  const d = await getDb()
+  const rows = await d.select<{ login: string; is_bot: number }[]>('SELECT login, is_bot FROM gh_logins')
+  return new Map(rows.map((r) => [r.login, r.is_bot === 1]))
+}
+
+export const saveGhLogins = async (logins: Map<string, boolean>) => {
+  const d = await getDb()
+  for (const [login, bot] of logins) {
+    await d.execute(
+      'INSERT INTO gh_logins (login, is_bot) VALUES ($1, $2) ON CONFLICT(login) DO UPDATE SET is_bot = $2',
+      [login, bot ? 1 : 0],
+    )
+  }
+}
+
 // --- captured reviews ---------------------------------------------------------------------------
 // Reviews recovered from a session transcript or registered by the CLI (see migration 014). They
 // only ever feed the chat feed — no alert, no stage move.
