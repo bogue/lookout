@@ -471,10 +471,15 @@ export const SessionPanel = ({
 
   const running = run?.status === 'running'
   const sessionId = run?.sessionId ?? task.sessionIds.at(-1)
-  // generic chat: as soon as the card has a session, the input talks to the latest one
-  // (live run -> reply into it; none -> resume the last session)
-  const showReply = (!!run && run.status !== 'closed') || (!!sessionId && !!task.repoPath)
-  const canReply = !running && !!sessionId && (!!run || !!task.repoPath)
+  // generic chat, always there: the input talks to the latest session (live run -> reply into it;
+  // none -> resume the last one), and with no session yet it starts a new one on the PR's branch.
+  // Only a repo without a local clone can't chat: claude needs a checkout to run in.
+  const canReply = !running && (!!run?.sessionId || !!task.repoPath)
+  const chatPlaceholder = !task.repoPath
+    ? `No local clone for ${task.repo} — add it in Settings to chat`
+    : sessionId
+      ? 'Message the latest claude session…'
+      : 'Ask claude about this PR (starts a new session)…'
 
   // Resuming only works from the directory the session ran in, which for a PR branch is usually a
   // worktree, not the clone. A live run already knows its own cwd; otherwise go find it.
@@ -935,19 +940,17 @@ export const SessionPanel = ({
           </div>
 
           <ChecksBox checks={checks} expanded={expandChecks} />
-          {showReply && (
-            <div className="border-t border-deck-800 p-3">
-              <ReplyBox
-                value={input}
-                onChange={setInput}
-                onSend={send}
-                onCancel={onCancel}
-                canReply={canReply}
-                running={running}
-                placeholder="Message the latest claude session…"
-              />
-            </div>
-          )}
+          <div className="border-t border-deck-800 p-3">
+            <ReplyBox
+              value={input}
+              onChange={setInput}
+              onSend={send}
+              onCancel={onCancel}
+              canReply={canReply}
+              running={running}
+              placeholder={chatPlaceholder}
+            />
+          </div>
 
           {report && (
             <div className="absolute inset-0 z-30 flex flex-col bg-deck-900">
@@ -960,7 +963,8 @@ export const SessionPanel = ({
                 onLink={(url, external) => openPrWindow(url, task.repo, task.prNumber, external)}
                 className="prose prose-sm prose-invert max-w-none flex-1 overflow-auto p-4 prose-headings:text-deck-100 prose-a:text-grass-300 prose-code:text-grass-300 prose-code:before:content-none prose-code:after:content-none prose-pre:bg-deck-800 prose-td:text-deck-200 prose-th:text-deck-300"
               />
-              {showReply && (
+              {/* "1,3" / "all" goes to the session that wrote the report */}
+              {!!sessionId && (
                 <div className="border-t border-deck-800 p-3">
                   <ReplyBox
                     value={input}

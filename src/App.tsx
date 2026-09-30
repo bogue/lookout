@@ -767,12 +767,23 @@ const App = () => {
             const board: ButtonBoard = panelIsPr ? 'pr' : 'review'
             const sessionId = panelTask.sessionIds.at(-1)
             const run = getRun(panelTask.id)
-            if (run) replyRun(panelTask.id, text, runCallbacks(board), sessionId)
+            if (run && (run.sessionId ?? sessionId)) replyRun(panelTask.id, text, runCallbacks(board), sessionId)
             // no live run (app restarted, run dismissed): resume the session directly, from the
             // checkout it was started in — `claude --resume` only sees that directory's sessions
             else if (panelTask.repoPath && sessionId) {
               const cwd = await sessionCwd(panelTask.repoPath, sessionId)
               resumeRun(panelTask.id, 'reply', board, cwd, text, sessionId, runCallbacks(board), ACTION_TOOLS)
+            }
+            // no session yet: the message opens a fresh one on the PR's branch checkout
+            else if (panelTask.repoPath) {
+              const t = panelTask
+              const prompt = `About PR #${t.prNumber} in ${t.repo} (branch ${t.branch}, checked out here):\n\n${text}`
+              try {
+                const cwd = await pathForBranch(t.repoPath as string, t.branch)
+                await startRun(t.id, 'chat', board, prompt, cwd, runCallbacks(board), ACTION_TOOLS)
+              } catch (e) {
+                logError('run', e, `${t.id}: chat`)
+              }
             }
           }}
           onCancel={() => cancelRun(panelTask.id)}
