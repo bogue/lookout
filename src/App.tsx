@@ -13,6 +13,7 @@ import {
   DEFAULT_PR_BUTTONS,
   DEFAULT_REVIEW_BUTTONS,
   getConfig,
+  getStreamMarks,
   setAnimations,
   setCaptureReviews,
   setLogging,
@@ -23,6 +24,8 @@ import {
   setRepos,
   setReviewButtons,
   setStreamAutoRun,
+  setStreamNotifiedAt,
+  setStreamSeenAt,
 } from './lib/config'
 import {
   addSessionId,
@@ -44,13 +47,14 @@ import {
   setSeen,
   setSnoozed,
   setStage,
+  streamItems,
   upsertMyPr,
 } from './lib/db'
 import type { TimelineSummary } from './lib/feed'
 import { resumeInGhostty } from './lib/ghostty'
 import { logError, logWarn, setLogEnabled } from './lib/log'
 import { snoozeMyPr, syncMyPrs } from './lib/myprs'
-import { onNotificationClick, setNotificationsEnabled } from './lib/notify'
+import { notify, onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
 import { fillPrompt } from './lib/prompt'
@@ -71,6 +75,7 @@ import {
 } from './lib/runs'
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
+import { digestOf, waitingCount } from './lib/streamdigest'
 import { onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
@@ -100,6 +105,10 @@ const POLL_MS = 10 * 60 * 1000
 const MIN_PARTIAL_MS = 60 * 1000
 // Stream Auto-run heartbeat: changes already tick it, this only catches what slipped past
 const STREAM_TICK_MS = 30 * 1000
+// Stream notifications come grouped, at most one per this interval
+const STREAM_DIGEST_MS = 15 * 60 * 1000
+// on the Stream tab with the window focused: what's in Needs you counts as seen
+const lookingAtStream = (view: View) => view === 'stream' && document.hasFocus()
 
 const parseFollowupSummary = (text: string) => {
   const m = text.match(/(\d+)\s*addressed\D*?(\d+)\s*partial\D*?(\d+)\s*pending/i)
@@ -231,6 +240,46 @@ const App = () => {
     return () => clearInterval(interval)
   }, [refresh, reload, reloadMyPrs, reloadAlerts])
 
+  // Stream badge + grouped notifications. The badge counts cards in Needs you, live. Being on the
+  // board (window focused) marks them seen; every STREAM_DIGEST_MS one notification names the cards
+  // that reached Needs you since I last looked or was told — none when that's zero.
+  const [streamWaiting, setStreamWaiting] = useState(0)
+  const viewRef = useRef(view)
+  viewRef.current = view
+
+  useEffect(() => {
+    const load = async () => {
+      setStreamWaiting(waitingCount(await streamItems()))
+      if (lookingAtStream(viewRef.current)) await setStreamSeenAt(new Date().toISOString())
+    }
+    const run = () => {
+      load().catch((e) => logError('stream', e, 'count waiting'))
+    }
+    run()
+    window.addEventListener('focus', run)
+    const off = onStreamChange(run)
+    return () => {
+      off()
+      window.removeEventListener('focus', run)
+    }
+  }, [])
+  useEffect(() => {
+    if (view === 'stream') setStreamSeenAt(new Date().toISOString()).catch(() => null)
+  }, [view])
+  useEffect(() => {
+    const check = async () => {
+      if (lookingAtStream(viewRef.current)) return // I'm already looking at them
+      const digest = digestOf(await streamItems(), await getStreamMarks())
+      if (!digest) return
+      await notify(digest.title, digest.body, { view: 'stream' })
+      await setStreamNotifiedAt(new Date().toISOString())
+    }
+    const interval = setInterval(() => {
+      check().catch((e) => logError('stream', e, 'notification digest'))
+    }, STREAM_DIGEST_MS)
+    return () => clearInterval(interval)
+  }, [])
+
   // Stream: a run can't outlive the app — cards left "running" are marked interrupted
   useEffect(() => {
     recoverStreamRuns().catch((e) => logError('stream', e, 'recover runs'))
@@ -266,11 +315,12 @@ const App = () => {
 
   // OS notification click: mark read + open the card panel
   useEffect(() => {
-    const listener = onNotificationClick(async ({ alertKey, taskId }) => {
+    const listener = onNotificationClick(async ({ alertKey, taskId, view: tab }) => {
       if (alertKey) await markAlertRead(alertKey)
       await reloadAlerts()
       await showMainWindow()
-      if (taskId) {
+      if (tab === 'stream') setView('stream')
+      else if (taskId) {
         setView('board')
         setPanelTaskId(taskId)
       }
@@ -577,6 +627,7 @@ const App = () => {
   const badges: Partial<Record<View, number>> = {
     board: tasks.filter((t) => alertedIds.has(t.id)).length,
     pulls: myPrs.filter((p) => alertedIds.has(p.id)).length,
+    stream: streamWaiting, // cards in Needs you, live
   }
 
   // clicking a card is reading its notifications
@@ -598,7 +649,7 @@ const App = () => {
       >
         {label}
         {badge ? (
-          <Tip label="Unread notifications on this board">
+          <Tip label={v === 'stream' ? 'Cards waiting for you in Needs you' : 'Unread notifications on this board'}>
             <span
               className={`ml-1.5 rounded-full px-1.5 text-xs ${v === 'discovery' ? 'bg-deck-700 text-deck-300' : 'bg-amber-500 text-black'}`}
             >

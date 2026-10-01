@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
-type NotificationExtra = { alertKey?: string; taskId?: string }
+type NotificationExtra = { alertKey?: string; taskId?: string; view?: string } // view: a tab to open (Stream digest)
 export type NotificationStatus = 'granted' | 'denied' | 'prompt'
 
 let enabled = true // the Settings switch (config.notifications)

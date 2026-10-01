@@ -72,6 +72,26 @@ export const getConfig = async (): Promise<Config> => {
   }
 }
 
+// Stream notification digest bookkeeping (streamdigest.ts): when I was last on the board, and when a
+// digest last went out. Kept out of Config — state, not a setting.
+export const getStreamMarks = async (): Promise<{ seenAt: string | null; notifiedAt: string | null }> => {
+  const s = await getStore()
+  return {
+    seenAt: (await s.get<string>('streamSeenAt')) ?? null,
+    notifiedAt: (await s.get<string>('streamNotifiedAt')) ?? null,
+  }
+}
+
+export const setStreamSeenAt = async (at: string) => {
+  const s = await getStore()
+  await s.set('streamSeenAt', at)
+}
+
+export const setStreamNotifiedAt = async (at: string) => {
+  const s = await getStore()
+  await s.set('streamNotifiedAt', at)
+}
+
 export const setStreamAutoRun = async (streamAutoRun: boolean) => {
   const s = await getStore()
   await s.set('streamAutoRun', streamAutoRun)
