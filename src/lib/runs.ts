@@ -174,7 +174,7 @@ export const resumeRun = async (
 export const failRun = (
   taskId: string,
   command: Run['command'],
-  board: ButtonBoard,
+  board: RunBoard,
   repoPath: string,
   text: string,
   error: unknown,
@@ -192,6 +192,7 @@ export const failRun = (
     status: 'error',
     child: null,
     allowedTools: REVIEW_TOOLS,
+    gen: 0,
   })
   notify()
 }

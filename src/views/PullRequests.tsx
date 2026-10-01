@@ -3,11 +3,12 @@ import { BoardFilters } from '../components/BoardFilters'
 import { CardFrame, type CardMenu } from '../components/CardFrame'
 import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFailBadge'
 import { Icon } from '../components/Icon'
+import { StreamChip } from '../components/StreamChip'
 import { Tip } from '../components/Tip'
 import { type BoardFilter, emptyFilter, matchesFilter, openRepoOptions } from '../lib/filters'
 import { PR_COLUMNS } from '../lib/prboard'
 import type { Run } from '../lib/runs'
-import type { CiChecks, CiState, MyPr, PrColumn, ReviewFlavor } from '../types'
+import type { CiChecks, CiState, MyPr, PrColumn, ReviewFlavor, StreamItem } from '../types'
 
 type Props = {
   prs: MyPr[]
@@ -18,6 +19,7 @@ type Props = {
   onDismissNew: (pr: MyPr) => void // the "new" comment tag: mark the PR's unread notifications read
   onReorder: (pr: MyPr, column: PrColumn, orderedIds: string[]) => void
   menuFor: (pr: MyPr) => CardMenu // quick actions: hover ⋯ and right-click
+  streamByRef: Map<string, StreamItem> // the live Stream card working on each PR (🌊 chip)
 }
 
 // the board shows the pipeline columns; Done is appended on demand
@@ -50,8 +52,10 @@ const PrCard = ({
   onDragStart,
   onDragEnd,
   menu,
+  stream,
 }: {
   menu: CardMenu
+  stream: StreamItem | undefined
   pr: MyPr
   me: string
   run: Run | undefined
@@ -80,6 +84,7 @@ const PrCard = ({
       run?.status === 'running' ? 'card-running' : alerted ? 'card-awaiting' : ''
     }`}
   >
+    <StreamChip item={stream} />
     {pr.column === 'done' ? (
       // Done = dealt with: the review/CI detail no longer matters, just show the outcome
       pr.state === 'closed' ? (
@@ -118,7 +123,17 @@ const PrCard = ({
 // default (unranked) position: manual drag order first, then non-drafts, drafts at the bottom
 const orderKey = (p: MyPr) => p.sortOrder ?? (p.isDraft ? 2e9 : 1e9)
 
-export const PullRequests = ({ prs, me, runs, alertedIds, onOpen, onDismissNew, onReorder, menuFor }: Props) => {
+export const PullRequests = ({
+  prs,
+  me,
+  runs,
+  alertedIds,
+  onOpen,
+  onDismissNew,
+  onReorder,
+  menuFor,
+  streamByRef,
+}: Props) => {
   const [showDone, setShowDone] = useState(false)
   const [showSnoozed, setShowSnoozed] = useState(false)
   const [filter, setFilter] = useState<BoardFilter>(emptyFilter)
@@ -272,6 +287,7 @@ export const PullRequests = ({ prs, me, runs, alertedIds, onOpen, onDismissNew, 
                       onOpen={onOpen}
                       onDismissNew={onDismissNew}
                       menu={menuFor(pr)}
+                      stream={streamByRef.get(pr.id)}
                       onDragStart={() => setDragging(pr)}
                       onDragEnd={() => {
                         setDragging(null)

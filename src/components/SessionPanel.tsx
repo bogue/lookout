@@ -51,6 +51,7 @@ type Props = {
   // fired on open with the card summary derived from the freshly-fetched timeline (per-card refresh)
   onRefresh?: (summary: TimelineSummary) => void
   expandChecks?: boolean // opened from the card's CI badge: unfold the failing checks
+  onOpenStream?: (itemId: string) => void // a Stream entry in the history: open that card on the Stream board
 }
 
 type ReplyBoxProps = {
@@ -347,6 +348,7 @@ export const SessionPanel = ({
   onClose,
   onRefresh,
   expandChecks = false,
+  onOpenStream,
 }: Props) => {
   const isPr = variant === 'pr'
   const [input, setInput] = useState('')
@@ -984,17 +986,19 @@ export const SessionPanel = ({
                         : 'border-deck-700 bg-deck-800 text-deck-200'
                     }`
                     const bubble =
-                      e.filePath || e.body || e.url || e.sessionId ? (
+                      e.filePath || e.body || e.url || e.sessionId || e.streamItemId ? (
                         <button
                           type="button"
                           onClick={(ev) =>
-                            e.body
-                              ? openCaptured(e.body, e.text)
-                              : e.filePath
-                                ? openReport(e.filePath)
-                                : e.sessionId
-                                  ? resumeSession(e.sessionId)
-                                  : openPrWindow(e.url as string, task.repo, task.prNumber, ev.metaKey)
+                            e.streamItemId
+                              ? onOpenStream?.(e.streamItemId)
+                              : e.body
+                                ? openCaptured(e.body, e.text)
+                                : e.filePath
+                                  ? openReport(e.filePath)
+                                  : e.sessionId
+                                    ? resumeSession(e.sessionId)
+                                    : openPrWindow(e.url as string, task.repo, task.prNumber, ev.metaKey)
                           }
                           className={`${bubbleClass} cursor-pointer text-left transition-colors duration-150 ${
                             e.mine

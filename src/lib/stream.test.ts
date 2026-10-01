@@ -14,6 +14,8 @@ import {
   prRefOf,
   sortColumn,
   streamActions,
+  streamCardsByRef,
+  streamChip,
   tagFor,
   tagQuery,
   tagSuggestions,
@@ -69,6 +71,31 @@ describe('tagFor', () => {
 
   it('uses owner/repo when the short name is ambiguous', () => {
     expect(tagFor('acme/app', ['acme/app', 'owner/app'])).toBe('acme/app')
+  })
+})
+
+describe('streamCardsByRef', () => {
+  it('keeps, per PR, the live card that matters most: running, then needs you, watching, queued', () => {
+    const xs = [
+      item({ id: 'q', ref: 'owner/app#2', refKind: 'pr', status: 'queued' }),
+      item({ id: 'r', ref: 'owner/app#2', refKind: 'pr', status: 'running' }),
+      item({ id: 'w', ref: 'owner/app#3', refKind: 'pr', status: 'watching' }),
+      item({ id: 'd', ref: 'owner/app#4', refKind: 'pr', status: 'done' }),
+      item({ id: 'i', ref: 'owner/app#5', refKind: 'pr', status: 'idea' }),
+      item({ id: 'u', ref: 'https://notion.so/x', refKind: 'url', status: 'running' }),
+    ]
+    const map = streamCardsByRef(xs)
+    expect([...map].map(([ref, x]) => [ref, x.id])).toEqual([
+      ['owner/app#2', 'r'],
+      ['owner/app#3', 'w'],
+    ])
+  })
+
+  it('labels the chip by column', () => {
+    expect(streamChip('running')).toBe('🌊 running')
+    expect(streamChip('failed')).toBe('🌊 needs you')
+    expect(streamChip('watching')).toBe('🌊 watching')
+    expect(streamChip('paused')).toBe('🌊 queued')
   })
 })
 

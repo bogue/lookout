@@ -45,6 +45,7 @@ type Props = {
   repos: WatchedRepo[]
   autoRun: boolean // agents pick queued cards on their own
   onAutoRun: (on: boolean) => void
+  openRequest: { id: string; at: number } | null // open this card (a new `at` reopens the same one)
 }
 
 // statuses whose column already says it all get no tag
@@ -412,10 +413,14 @@ const Dump = ({
   )
 }
 
-export const Stream = ({ repos, autoRun, onAutoRun }: Props) => {
+export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
   const [items, setItems] = useState<StreamItem[]>([])
   const [version, setVersion] = useState(0) // bumped after every write: the open panel re-reads its feed
   const [openId, setOpenId] = useState<string | null>(null)
+  // a Stream entry clicked in a PR's history (App): open that card here
+  useEffect(() => {
+    if (openRequest) setOpenId(openRequest.id)
+  }, [openRequest])
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [dragging, setDragging] = useState<StreamItem | null>(null)
   const [dropTarget, setDropTarget] = useState<StreamColumn | null>(null)

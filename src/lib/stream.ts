@@ -191,6 +191,31 @@ export const movedIds = (column: StreamItem[], id: string, to: 'top' | 'bottom')
   return to === 'top' ? [id, ...rest] : [...rest, id]
 }
 
+// For the 🌊 chip on a Reviews / Pull Requests card: per PR, the live Stream card that matters most.
+// Inbox and Done don't count — nothing is happening to the PR there.
+const CHIP_RANK: Partial<Record<StreamColumn, number>> = { active: 1, needs_you: 2, queued: 4 }
+const rankOf = (x: StreamItem) =>
+  x.status === 'running' ? 0 : x.status === 'watching' ? 3 : (CHIP_RANK[columnOf(x.status)] ?? 9)
+
+export const streamCardsByRef = (items: StreamItem[]): Map<string, StreamItem> => {
+  const map = new Map<string, StreamItem>()
+  for (const x of items) {
+    if (x.refKind !== 'pr' || !x.ref || rankOf(x) === 9) continue
+    const held = map.get(x.ref)
+    if (!held || rankOf(x) < rankOf(held)) map.set(x.ref, x)
+  }
+  return map
+}
+
+export const streamChip = (status: StreamStatus): string =>
+  status === 'running'
+    ? '🌊 running'
+    : status === 'watching'
+      ? '🌊 watching'
+      : columnOf(status) === 'needs_you'
+        ? '🌊 needs you'
+        : '🌊 queued'
+
 // a `pr` reference (owner/repo#n) as the PR it names
 export const prRefOf = (ref: string): { repo: string; number: number; url: string } | null => {
   const m = ref.match(/^([\w.-]+\/[\w.-]+)#(\d+)$/)

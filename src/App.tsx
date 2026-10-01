@@ -75,6 +75,7 @@ import {
 } from './lib/runs'
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
+import { streamCardsByRef } from './lib/stream'
 import { digestOf, waitingCount } from './lib/streamdigest'
 import { checkWatching, notifyStream, onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
@@ -92,6 +93,7 @@ import type {
   PrState,
   ReviewTask,
   Stage,
+  StreamItem,
   WatchedRepo,
 } from './types'
 import { Board } from './views/Board'
@@ -245,13 +247,18 @@ const App = () => {
   // Stream badge + grouped notifications. The badge counts cards in Needs you, live. Being on the
   // board (window focused) marks them seen; every STREAM_DIGEST_MS one notification names the cards
   // that reached Needs you since I last looked or was told — none when that's zero.
-  const [streamWaiting, setStreamWaiting] = useState(0)
+  const [streamAll, setStreamAll] = useState<StreamItem[]>([])
+  const streamWaiting = waitingCount(streamAll)
+  // the live Stream card working on each PR, for the 🌊 chip on its Reviews / Pull Requests card
+  const streamByRef = streamCardsByRef(streamAll)
+  // a Stream entry clicked in a PR's history: switch to Stream and open that card there
+  const [streamOpen, setStreamOpen] = useState<{ id: string; at: number } | null>(null)
   const viewRef = useRef(view)
   viewRef.current = view
 
   useEffect(() => {
     const load = async () => {
-      setStreamWaiting(waitingCount(await streamItems()))
+      setStreamAll(await streamItems())
       if (lookingAtStream(viewRef.current)) await setStreamSeenAt(new Date().toISOString())
     }
     const run = () => {
@@ -757,6 +764,7 @@ const App = () => {
       >
         {view === 'pulls' && (
           <PullRequests
+            streamByRef={streamByRef}
             prs={myPrs}
             me={config.githubUser}
             runs={runs}
@@ -775,6 +783,7 @@ const App = () => {
           <Stream
             repos={config.repos}
             autoRun={config.streamAutoRun}
+            openRequest={streamOpen}
             onAutoRun={async (on) => {
               await setStreamAutoRun(on)
               setConfig(await getConfig())
@@ -797,6 +806,7 @@ const App = () => {
         )}
         {view === 'board' && (
           <Board
+            streamByRef={streamByRef}
             tasks={tasks}
             runs={runs}
             menuFor={(t) => cardMenu(t, 'review')}
@@ -867,6 +877,11 @@ const App = () => {
 
       {panelTask && (
         <SessionPanel
+          onOpenStream={(id) => {
+            setPanelTaskId(null)
+            setView('stream')
+            setStreamOpen({ id, at: Date.now() })
+          }}
           task={panelTask}
           run={getRun(panelTask.id)}
           me={config.githubUser}

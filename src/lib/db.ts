@@ -622,6 +622,26 @@ export const logStreamReply = async (id: string, text: string) => {
   await logStreamEvent(d, id, 'reply', text, 'me')
 }
 
+// The trail of every Stream card about one PR (ref owner/repo#n), for that PR's own history on the
+// Reviews / Pull Requests boards. Only the milestones; the rest stays in the Stream thread.
+export const streamEventsForRef = async (
+  ref: string,
+): Promise<(StreamEvent & { itemTitle: string; itemStatus: StreamStatus })[]> => {
+  const d = await getDb()
+  const rows = await d.select<(StreamEventRow & { item_title: string; item_status: string })[]>(
+    `SELECT e.*, i.title AS item_title, i.status AS item_status FROM stream_events e
+     JOIN stream_items i ON i.id = e.item_id
+     WHERE i.ref = $1 AND e.kind IN ('created', 'started', 'result', 'watching', 'triggered', 'failed', 'status')
+     ORDER BY e.id`,
+    [ref],
+  )
+  return rows.map((r) => ({
+    ...rowToStreamEvent(r),
+    itemTitle: r.item_title,
+    itemStatus: r.item_status as StreamStatus,
+  }))
+}
+
 // Watching: the card waits on GitHub. It keeps its session and worktree; the watch says what to tell
 // the agent when it fires (streamwatch.ts).
 export const watchStreamItem = async (id: string, w: WaitFor, label: string, actor: 'me' | 'lookout') => {

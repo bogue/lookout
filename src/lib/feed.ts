@@ -1,6 +1,6 @@
 import type { PrState, ReviewFlavor, ReviewTask } from '../types'
 import { reviewFileTs } from './alerts'
-import { capturedReviewsForTask } from './db'
+import { capturedReviewsForTask, streamEventsForRef } from './db'
 import { fetchPrTimeline, type GhTimelineEvent } from './gh'
 import type { IconName } from './icons'
 import { logError, logInfo } from './log'
@@ -22,6 +22,7 @@ export type FeedEvent = {
   filePath?: string // opens the local review report
   body?: string // a captured review's markdown — stored, with no file behind it (capture.ts)
   sessionId?: string // resumes the claude session
+  streamItemId?: string // a Stream card's milestone: opens that card on the Stream board
   fromSession?: string // a captured report: the session it was read out of
   // the session a report answers, quoted over it like a chat reply. exact = the capture named it;
   // a report file names none, so it quotes the last session started before it (a guess)
@@ -152,10 +153,52 @@ export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEv
       fromSession: c.sessionId ?? undefined,
       filePath: c.filePath ?? undefined,
     })
+  const stream = await streamEventsForRef(task.id).catch((e) => {
+    logError('feed', e, `stream entries for ${task.id}`)
+    return []
+  })
+  events.push(...streamFeedEvents(stream, me))
   return events
 }
 
-const isReport = (e: FeedEvent) => e.actor === 'Lookout' && !!(e.filePath || e.body)
+type StreamTrail = { id: number; itemId: string; ts: string; kind: string; text: string | null; itemTitle: string }
+
+// A Stream card working on this PR, told in the PR's own history: its milestones only, each opening
+// the card on the Stream board. Lookout's doing, so on my side, like the reports.
+export const streamFeedEvents = (events: StreamTrail[], me: string): FeedEvent[] =>
+  events.flatMap((e): FeedEvent[] => {
+    const title = `“${e.itemTitle}”`
+    const text =
+      e.kind === 'created'
+        ? `added ${title}`
+        : e.kind === 'started'
+          ? `agent started on ${title}`
+          : e.kind === 'result'
+            ? `result ready for review — ${title}`
+            : e.kind === 'watching'
+              ? `${title} is ${e.text ?? 'waiting on GitHub'}`
+              : e.kind === 'triggered'
+                ? `${title} resumed: ${e.text ?? ''}`
+                : e.kind === 'failed'
+                  ? `${title} failed`
+                  : e.kind === 'status' && /→ (done|skipped)$/.test(e.text ?? '')
+                    ? `${title} ${e.text?.split('→ ')[1]}`
+                    : null
+    if (!text) return []
+    return [
+      {
+        ts: e.ts,
+        icon: 'workflow',
+        ...lookout(me),
+        avatar: { emoji: '🌊', badge: me },
+        text: `Stream: ${text}`,
+        streamItemId: e.itemId,
+      },
+    ]
+  })
+
+// Lookout's own entries, re-read from the store on every card refresh: reports and Stream entries
+const isReport = (e: FeedEvent) => e.actor === 'Lookout' && !!(e.filePath || e.body || e.streamItemId)
 
 // Swap a built feed's reports for a fresh read of them: what's stored now is the whole truth, so a
 // report is added, kept or dropped as the store says, and re-quoted against the feed's sessions.

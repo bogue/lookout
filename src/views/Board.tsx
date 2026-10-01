@@ -3,11 +3,12 @@ import { BoardFilters } from '../components/BoardFilters'
 import { CardFrame, type CardMenu } from '../components/CardFrame'
 import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFailBadge'
 import { Icon } from '../components/Icon'
+import { StreamChip } from '../components/StreamChip'
 import { Tip } from '../components/Tip'
 import { type BoardFilter, emptyFilter, matchesFilter, openAuthorOptions, openRepoOptions } from '../lib/filters'
 import type { Run } from '../lib/runs'
 import { STAGE_LABEL } from '../lib/stages'
-import type { ReviewTask, Stage } from '../types'
+import type { ReviewTask, Stage, StreamItem } from '../types'
 
 type Props = {
   tasks: ReviewTask[]
@@ -17,6 +18,7 @@ type Props = {
   onSeen: (t: ReviewTask) => void
   onReorder: (t: ReviewTask, stage: Stage, orderedIds: string[]) => void
   menuFor: (t: ReviewTask) => CardMenu // quick actions: hover ⋯ and right-click
+  streamByRef: Map<string, StreamItem> // the live Stream card working on each PR (🌊 chip)
 }
 
 // hint doubles as the column's tooltip: what a card in it actually means
@@ -43,9 +45,10 @@ type CardProps = {
   onDragStart: () => void
   onDragEnd: () => void
   menu: CardMenu
+  stream: StreamItem | undefined
 }
 
-const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }: CardProps) => (
+const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu, stream }: CardProps) => (
   <CardFrame
     menu={menu}
     title={t.prTitle}
@@ -72,6 +75,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
         {t.prState === 'open' && t.approved ? '✓ approved' : t.prState}
       </span>
     )}
+    <StreamChip item={stream} />
     {/* a red build stays visible in Done too, while the PR is still open */}
     {t.stage === 'done' && t.prState === 'open' && t.ciState === 'fail' && (
       <CiFailBadge checks={t.ciChecks} onOpen={() => onOpen(true)} />
@@ -116,7 +120,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
   </CardFrame>
 )
 
-export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorder, menuFor }: Props) => {
+export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorder, menuFor, streamByRef }: Props) => {
   const [showSnoozed, setShowSnoozed] = useState(false)
   const [filter, setFilter] = useState<BoardFilter>(emptyFilter)
   const [dragging, setDragging] = useState<ReviewTask | null>(null)
@@ -262,6 +266,7 @@ export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorde
                       onOpen={(checks) => onOpenSession(t, checks)}
                       onSeen={() => onSeen(t)}
                       menu={menuFor(t)}
+                      stream={streamByRef.get(t.id)}
                       onDragStart={() => setDragging(t)}
                       onDragEnd={() => {
                         setDragging(null)
