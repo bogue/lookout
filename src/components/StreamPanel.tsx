@@ -5,6 +5,7 @@ import { resumeInGhostty } from '../lib/ghostty'
 import { logError } from '../lib/log'
 import { getRuns, subscribeRuns } from '../lib/runs'
 import { projectGateTarget, prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
+import { nextStepOf } from '../lib/streamnext'
 import { cancelStreamItem, replyStreamItem, streamTaskId } from '../lib/streamrunner'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
@@ -12,6 +13,9 @@ import { CloseButton } from './CloseButton'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
 import { SidePanel } from './SidePanel'
+
+// how long after a result the panel says Haiku is still thinking (it answers in seconds; past this it failed)
+const SUGGEST_WAIT_MS = 60_000
 
 type Props = {
   item: StreamItem
@@ -101,17 +105,24 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   const session = item.sessionIds.at(-1) ?? null
   const canReply = !!session && !!item.checkout && item.status !== 'running'
   const lastResultAt = events.map((e) => e.kind).lastIndexOf('result')
+  const next = nextStepOf(events) // Haiku's suggested next step for the latest result
+
+  // a reply into the session: typed in the composer, or one of Haiku's suggested buttons
+  const sendReply = async (text: string) => {
+    try {
+      await replyStreamItem(item, text)
+      return true
+    } catch (e) {
+      logError('stream', e, 'reply to stream item')
+      return false
+    }
+  }
 
   const send = async () => {
     const text = reply.trim()
     if (!text) return
     setReply('')
-    try {
-      await replyStreamItem(item, text)
-    } catch (e) {
-      logError('stream', e, 'reply to stream item')
-      setReply(text) // keep what I typed
-    }
+    if (!(await sendReply(text))) setReply(text) // keep what I typed
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the re-read signal
@@ -253,7 +264,49 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                         🤖 Result <span className="ml-auto">{messageTime(e.ts)}</span>
                       </p>
                       <Markdown text={e.text ?? ''} className="text-sm" />
-                      {lastResult && item.status === 'needs_review' && (
+                      {lastResult && item.status === 'needs_review' && next && (
+                        // Haiku's read of what comes next: each button sends its reply (shown) or finishes
+                        <div className="mt-3 flex flex-col gap-2 border-t border-deck-700 pt-2.5">
+                          {next.headline && <p className="text-xs text-deck-300">🤖 {next.headline}</p>}
+                          <div className="flex flex-col gap-1.5">
+                            {next.actions.map((a, k) => (
+                              <button
+                                key={a.label}
+                                type="button"
+                                onClick={() => (a.reply ? sendReply(a.reply) : onAction(item, 'approve'))}
+                                className={`flex cursor-pointer flex-col items-start rounded-md px-3 py-2 text-left ${
+                                  k === 0
+                                    ? 'bg-grass-600 text-white hover:bg-grass-500'
+                                    : 'bg-deck-700 text-deck-100 hover:bg-deck-600'
+                                }`}
+                              >
+                                <span className="text-sm font-semibold">{a.label}</span>
+                                <span className={`text-xs ${k === 0 ? 'text-white/75' : 'text-deck-400'}`}>
+                                  {a.reply ? `sends: “${a.reply}”` : 'marks it done'}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-deck-500">
+                            {next.actions.some((a) => !a.reply) ? (
+                              'Or'
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => onAction(item, 'approve')}
+                                  className="cursor-pointer text-deck-300 underline hover:text-deck-100"
+                                >
+                                  Mark done
+                                </button>{' '}
+                                or
+                              </>
+                            )}{' '}
+                            write your own reply below.
+                          </p>
+                        </div>
+                      )}
+                      {lastResult && item.status === 'needs_review' && !next && (
                         <div className="mt-3 flex items-center gap-2 border-t border-deck-700 pt-2.5">
                           <button
                             type="button"
@@ -262,7 +315,11 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                           >
                             Approve
                           </button>
-                          <span className="text-xs text-deck-500">or reply below to send it back with a note</span>
+                          <span className="text-xs text-deck-500">
+                            {Date.now() - new Date(e.ts).getTime() < SUGGEST_WAIT_MS
+                              ? '🤖 Haiku is working out the next step…'
+                              : 'or reply below to send it back with a note'}
+                          </span>
                         </div>
                       )}
                     </li>

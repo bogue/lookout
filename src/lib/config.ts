@@ -67,8 +67,8 @@ export const getConfig = async (): Promise<Config> => {
     openInBrowser: (await s.get<boolean>('openInBrowser')) ?? false,
     notifications: (await s.get<boolean>('notifications')) ?? true,
     mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
-    // off by default: agents spending tokens on their own is something I switch on
-    streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? false,
+    // on by default: the board is for work agents pick up; a card still waits for me before anything leaves
+    streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? true,
   }
 }
 

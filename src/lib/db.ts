@@ -621,6 +621,15 @@ export const logStreamReply = async (id: string, text: string) => {
   await logStreamEvent(d, id, 'reply', text, 'me')
 }
 
+// Haiku's suggested next step for the latest result (streamnext.ts), as JSON. Only while the item
+// still waits on that result: a reply or a move made meanwhile wins.
+export const saveStreamNext = async (id: string, json: string) => {
+  const d = await getDb()
+  const item = await streamItem(id)
+  if (item?.status !== 'needs_review') return
+  await logStreamEvent(d, id, 'next', json, 'lookout')
+}
+
 // A status change. Entering another column resets the card's rank to `entryRank` there (stream.ts):
 // on top of Done, unranked elsewhere. The caller re-ranks the whole column right after a drag.
 export const setStreamStatus = async (item: StreamItem, status: StreamStatus, rank: number | null = null) => {

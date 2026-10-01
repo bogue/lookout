@@ -6,7 +6,9 @@ import {
   addStreamSession,
   claimStreamRun,
   logStreamReply,
+  saveStreamNext,
   setStreamCheckout,
+  streamItem,
   streamItems,
   streamRunEnded,
   streamRunResult,
@@ -15,6 +17,7 @@ import { allowPath } from './fsscope'
 import { errText, logError, logInfo } from './log'
 import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
+import { suggestNextStep } from './streamnext'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
 import { parseWorktrees } from './worktrees'
 
@@ -141,11 +144,19 @@ const callbacks = (id: string) => {
     },
     onResult: (_: string, text: string, isError: boolean) => {
       if (!current()) return
-      serial(id, () =>
-        isError
-          ? streamRunEnded(id, 'failed', text || 'claude reported an error')
-          : streamRunResult(id, text || '(the agent finished without a summary)'),
-      )
+      if (isError) {
+        serial(id, () => streamRunEnded(id, 'failed', text || 'claude reported an error'))
+        return
+      }
+      serial(id, () => streamRunResult(id, text || '(the agent finished without a summary)'))
+      // Haiku proposes the next step, off the write queue (it takes seconds); saved only if this is
+      // still the latest turn
+      streamItem(id)
+        .then((item) => (item ? suggestNextStep(item, text) : null))
+        .then((next) => {
+          if (next && current()) serial(id, () => saveStreamNext(id, JSON.stringify(next)))
+        })
+        .catch((e) => logError('stream', e, 'suggest next step'))
     },
     onEnd: (taskId: string, status: string) => {
       if (!current()) return
