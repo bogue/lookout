@@ -5,12 +5,28 @@
 
 export type WatcherCheck = 'review_requested' | 'author_pushed' | 'my_pr_reviewed' | 'my_pr_ci_red' | 'prompt'
 
-export const WATCHER_CHECKS: { value: WatcherCheck; label: string }[] = [
-  { value: 'review_requested', label: 'My review is requested' },
-  { value: 'author_pushed', label: 'The author pushed after my review' },
-  { value: 'my_pr_reviewed', label: 'My PR got a review' },
-  { value: 'my_pr_ci_red', label: "My PR's CI is red" },
-  { value: 'prompt', label: 'A prompt (an agent checks)' },
+export const WATCHER_CHECKS: { value: WatcherCheck; label: string; hint: string }[] = [
+  {
+    value: 'review_requested',
+    label: 'My review is requested',
+    hint: 'An open, non-draft PR asks for my review — one card per PR.',
+  },
+  {
+    value: 'author_pushed',
+    label: 'The author pushed after my review',
+    hint: 'A PR I reviewed got new commits from its author — one card per push.',
+  },
+  {
+    value: 'my_pr_reviewed',
+    label: 'My PR got a review',
+    hint: 'Someone reviewed one of my open PRs — one card per review.',
+  },
+  { value: 'my_pr_ci_red', label: "My PR's CI is red", hint: 'CI fails on one of my open PRs.' },
+  {
+    value: 'prompt',
+    label: 'A prompt (an agent checks)',
+    hint: 'A read-only agent checks what you write below, and answers with the cards to create.',
+  },
 ]
 
 export type Watcher = {
@@ -76,7 +92,7 @@ export const DEFAULT_WATCHERS: Watcher[] = [
 ]
 
 // the task a watcher's card gets when it follows no flow
-export const DEFAULT_TASK: Record<Exclude<WatcherCheck, 'prompt'>, (n: number) => string> = {
+export const DEFAULT_TASK: Record<Exclude<WatcherCheck, 'prompt'>, (n: number | string) => string> = {
   review_requested: (n) => `Review pull request #${n}`,
   author_pushed: (n) => `Follow up on #${n}: the author pushed — check whether the earlier review points are addressed`,
   my_pr_reviewed: (n) => `Address the new review comments on my pull request #${n}`,
