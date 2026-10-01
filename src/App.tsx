@@ -26,6 +26,7 @@ import {
   setStreamAutoRun,
   setStreamNotifiedAt,
   setStreamSeenAt,
+  setStreamTemplates,
 } from './lib/config'
 import {
   addSessionId,
@@ -134,6 +135,7 @@ const App = () => {
     notifications: true,
     mergeMethod: 'merge',
     streamAutoRun: false,
+    streamTemplates: [],
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -784,6 +786,8 @@ const App = () => {
             repos={config.repos}
             autoRun={config.streamAutoRun}
             openRequest={streamOpen}
+            templates={config.streamTemplates}
+            onManageTemplates={() => setView('settings')}
             onAutoRun={async (on) => {
               await setStreamAutoRun(on)
               setConfig(await getConfig())
@@ -869,6 +873,10 @@ const App = () => {
             }}
             onSaveMergeMethod={async (m) => {
               await setMergeMethod(m)
+              setConfig(await getConfig())
+            }}
+            onSaveStreamTemplates={async (templates) => {
+              await setStreamTemplates(templates)
               setConfig(await getConfig())
             }}
           />

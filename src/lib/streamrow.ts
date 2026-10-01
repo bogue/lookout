@@ -1,5 +1,6 @@
 import type { StreamEvent, StreamItem, StreamStatus } from '../types'
 import { STATUS_LABEL } from './stream'
+import { parseSteps } from './streamflow'
 import { parseWaitFor } from './streamwatch'
 
 // The `stream_items` columns the board reads (src-tauri/migrations/022_stream.sql). The step/run
@@ -22,6 +23,10 @@ export type StreamItemRow = {
   checkout: string | null
   session_ids: string // JSON array
   wait_for: string | null // JSON WaitFor
+  steps: string // JSON TemplateStep[]
+  step_index: number
+  template_id: string | null
+  guidelines: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -71,6 +76,10 @@ export const rowToStreamItem = (r: StreamItemRow): StreamItem => ({
   checkout: r.checkout,
   sessionIds: sessionIdsOf(r.session_ids),
   waitFor: parseWaitFor(r.wait_for),
+  steps: parseSteps(r.steps),
+  stepIndex: r.step_index,
+  templateId: r.template_id,
+  guidelines: r.guidelines,
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,

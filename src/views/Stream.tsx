@@ -32,8 +32,16 @@ import {
   tagQuery,
   tagSuggestions,
 } from '../lib/stream'
+import type { FlowTemplate } from '../lib/streamflow'
 import { guessProjects } from '../lib/streamproject'
-import { notifyStream, onStreamChange, runStreamItem, SHAPE_BRANCH, shapeStreamItem } from '../lib/streamrunner'
+import {
+  approveStreamItem,
+  notifyStream,
+  onStreamChange,
+  runStreamItem,
+  SHAPE_BRANCH,
+  shapeStreamItem,
+} from '../lib/streamrunner'
 import { waitingLabel } from '../lib/streamwatch'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
@@ -46,6 +54,8 @@ type Props = {
   autoRun: boolean // agents pick queued cards on their own
   onAutoRun: (on: boolean) => void
   openRequest: { id: string; at: number } | null // open this card (a new `at` reopens the same one)
+  templates: FlowTemplate[] // flow templates for the dump's picker (Settings → Stream)
+  onManageTemplates: () => void // to Settings, where they are edited
 }
 
 // statuses whose column already says it all get no tag
@@ -129,6 +139,14 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
           <span className="animate-pulse text-deck-500">finding project…</span>
         )}
         <RefChip item={item} />
+        {item.steps.length > 1 && (
+          <span
+            title={`Flow step ${item.stepIndex + 1} of ${item.steps.length}`}
+            className="rounded bg-deck-700 px-1 py-0.5"
+          >
+            step {item.stepIndex + 1}/{item.steps.length}
+          </span>
+        )}
         {!QUIET.includes(item.status) && !projectGateTarget(item.gate) && (
           <span className={`rounded px-1 py-0.5 ${TAG_CLASS[item.status] ?? 'bg-deck-700'}`}>
             {item.status === 'watching' && item.waitFor ? `👁 ${waitingLabel(item.waitFor)}` : STATUS_LABEL[item.status]}
@@ -147,21 +165,29 @@ const ReturnKey = () => <kbd className="rounded bg-black/20 px-1 font-sans text-
 // The dump: type or paste what I want done, one line each; a list of targets splits into one card
 // per target unless I say they go together. `#project` picks the project; with none, "All projects"
 // lets Haiku place each card, and the ones it can't place wait in Needs you.
+// the flow picker's last option: open Settings → Stream instead of picking
+const MANAGE = '__manage__'
+
 // one row of the caret dropdown: a #project or a /skill
 type MenuItem = { key: string; label: string; detail: string | null; insert: string }
 
 const Dump = ({
   repos,
   slash,
+  templates,
+  onManageTemplates,
   onAdd,
 }: {
   repos: WatchedRepo[]
   slash: SlashEntry[] // my skills and commands, for `/`
-  onAdd: (text: string, picked: string | null, queue: boolean) => void
+  templates: FlowTemplate[]
+  onAdd: (text: string, picked: string | null, queue: boolean, templateId: string | null) => void
+  onManageTemplates: () => void
 }) => {
   const [text, setText] = useState('')
   const [repo, setRepo] = useState('') // '' = All projects
   const [queue, setQueue] = useState(false) // where the cards land: Inbox (false) or Queued
+  const [templateId, setTemplateId] = useState<string | null>(null) // the flow the cards follow
   const [listOpen, setListOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const names = useMemo(() => repos.map((r) => r.repo), [repos])
@@ -237,7 +263,7 @@ const Dump = ({
 
   const add = () => {
     if (!preview.length) return
-    onAdd(text, picked, queue)
+    onAdd(text, picked, queue, templates.some((t) => t.id === templateId) ? templateId : null)
     setText('')
     setListOpen(false)
   }
@@ -346,6 +372,22 @@ const Dump = ({
               </option>
             ))}
           </select>
+          {/* the flow the cards follow: none = one step, approve = done */}
+          <select
+            value={templateId ?? ''}
+            onChange={(e) => (e.target.value === MANAGE ? onManageTemplates() : setTemplateId(e.target.value || null))}
+            aria-label="Flow"
+            title="The flow template these cards follow"
+            className={`${control} max-w-[12rem] cursor-pointer truncate border border-deck-700 bg-deck-800 px-2 text-deck-200 focus:border-deck-500 focus:outline-none`}
+          >
+            <option value="">No flow</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} · {t.steps.length} step{t.steps.length === 1 ? '' : 's'}
+              </option>
+            ))}
+            <option value={MANAGE}>Manage flows…</option>
+          </select>
           {/* where the cards land: a setting of the dump, not a second button competing with Add */}
           <fieldset aria-label="Add to" className={`${control} flex border border-deck-700 bg-deck-800 p-0.5`}>
             {(
@@ -413,7 +455,7 @@ const Dump = ({
   )
 }
 
-export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
+export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onManageTemplates }: Props) => {
   const [items, setItems] = useState<StreamItem[]>([])
   const [version, setVersion] = useState(0) // bumped after every write: the open panel re-reads its feed
   const [openId, setOpenId] = useState<string | null>(null)
@@ -463,8 +505,17 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
       .catch((e) => logError('stream', e, 'list skills'))
   }, [paths])
 
-  const onAdd = (text: string, picked: string | null, queue: boolean) =>
-    write(() => addStreamItems(parseDump(text, names, picked), queue ? 'queued' : 'idea'), 'add stream items')
+  const onAdd = (text: string, picked: string | null, queue: boolean, templateId: string | null) =>
+    write(
+      () =>
+        addStreamItems(
+          parseDump(text, names, picked),
+          queue ? 'queued' : 'idea',
+          undefined,
+          templates.find((t) => t.id === templateId),
+        ),
+      'add stream items',
+    )
 
   // Cards with no project yet (repo ''): Haiku places them; the ones it can't wait in Needs you.
   // Runs after every reload, so a guess cut short by quitting the app is simply retried.
@@ -491,6 +542,8 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
   }, [items, names])
 
   const onAction = (item: StreamItem, action: StreamActionId) => {
+    // a flow's approval moves it to its next step; only the last one finishes the card
+    if (action === 'approve') return write(() => approveStreamItem(item, 'me'), 'stream approve')
     // shaping: a read-only agent on the idea; a failed shaping turn retries as shaping, not as work
     if (action === 'shape' || (action === 'retry' && item.branch === SHAPE_BRANCH))
       return write(() => shapeStreamItem(item, repos), 'stream shape')
@@ -656,7 +709,7 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
       </div>
       {/* the dump sits under the board, like a chat box */}
       <div className="mx-[70px] my-[35px] shrink-0">
-        <Dump repos={repos} slash={slash} onAdd={onAdd} />
+        <Dump repos={repos} slash={slash} templates={templates} onAdd={onAdd} onManageTemplates={onManageTemplates} />
       </div>
       {open && (
         <StreamPanel

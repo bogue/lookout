@@ -53,6 +53,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   notifications: true,
   mergeMethod: 'merge',
   streamAutoRun: false,
+  streamTemplates: [],
 })
 
 const ghPr = (o: Partial<GhMyPr> = {}): GhMyPr => ({

@@ -1,3 +1,4 @@
+import type { FlowTemplate, TemplateStep } from './lib/streamflow'
 import type { WaitFor } from './lib/streamwatch'
 
 export type Stage =
@@ -165,6 +166,7 @@ export type Config = {
   notifications: boolean // OS notifications for new alerts; the OS permission is asked when it's switched on
   mergeMethod: MergePreference // the Merge button's default strategy, when the repo allows it
   streamAutoRun: boolean // Stream: agents pick queued cards on their own (off = only Run now starts one)
+  streamTemplates: FlowTemplate[] // Stream flow templates (Settings → Stream)
 }
 
 // Stream: things I dumped for Lookout's agents to work through (src/lib/stream.ts).
@@ -210,6 +212,10 @@ export type StreamItem = {
   checkout: string | null // the worktree path its runs use
   sessionIds: string[] // Claude sessions run for it, oldest first
   waitFor: WaitFor | null // Watching: what on GitHub it waits for (streamwatch.ts)
+  steps: TemplateStep[] // its flow's steps (streamflow.ts); none = a one-step card
+  stepIndex: number // the step it is on
+  templateId: string | null // the flow template it came from
+  guidelines: string | null // the template's rules, appended to every step
   createdBy: string // me | cli | watcher:<id>
   createdAt: string
   updatedAt: string

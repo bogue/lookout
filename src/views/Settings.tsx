@@ -11,6 +11,7 @@ import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
 import { SidePanel } from '../components/SidePanel'
+import { StreamTemplates } from '../components/StreamTemplates'
 import { Tip } from '../components/Tip'
 import { dropAction } from '../lib/actionlist'
 import { avatarUrl } from '../lib/avatar'
@@ -29,6 +30,7 @@ import {
   openNotificationSettings,
   requestNotifications,
 } from '../lib/notify'
+import type { FlowTemplate } from '../lib/streamflow'
 import type { ActionButton, ButtonBoard, Config, MergePreference, ReviewTask, WatchedRepo } from '../types'
 import { History } from './History'
 
@@ -44,6 +46,7 @@ type Props = {
   onSaveOpenInBrowser: (on: boolean) => void
   onSaveNotifications: (on: boolean) => void
   onSaveMergeMethod: (m: MergePreference) => void
+  onSaveStreamTemplates: (templates: FlowTemplate[]) => void
 }
 
 // What to paste into ~/.claude/settings.json for instant capture. Lookout does not write that file
@@ -305,6 +308,7 @@ export const Settings = ({
   onSaveOpenInBrowser,
   onSaveNotifications,
   onSaveMergeMethod,
+  onSaveStreamTemplates,
 }: Props) => {
   const [editing, setEditing] = useState<{ board: ButtonBoard; id: string } | null>(null) // the one action open in the side panel
   const [confirm, setConfirm] = useState<Confirm | null>(null) // a destructive change waiting for a yes
@@ -540,6 +544,8 @@ export const Settings = ({
       {list('review')}
 
       {list('pr')}
+
+      <StreamTemplates templates={config.streamTemplates} onSave={onSaveStreamTemplates} />
 
       <div className="flex flex-col gap-3">
         <div>

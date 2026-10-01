@@ -5,6 +5,7 @@ import { ACTION_TOOLS } from './claude'
 import {
   addStreamItems,
   addStreamSession,
+  advanceStreamStep,
   allAlerts,
   allMyPrs,
   allTasks,
@@ -14,6 +15,7 @@ import {
   logStreamReply,
   saveStreamNext,
   setStreamCheckout,
+  setStreamStatus,
   streamItem,
   streamItems,
   streamRunEnded,
@@ -25,6 +27,7 @@ import { allowPath } from './fsscope'
 import { errText, logError, logInfo } from './log'
 import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
+import { advance, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
@@ -168,10 +171,19 @@ const callbacks = (id: string, mode: 'work' | 'shape' = 'work') => {
         return
       }
       serial(id, () => streamRunResult(id, text || '(the agent finished without a summary)'))
-      // Haiku proposes the next step, off the write queue (it takes seconds); saved only if this is
-      // still the latest turn
-      streamItem(id)
-        .then((item) => (item ? suggestNextStep(item, text) : null))
+      // A flow step with no gate moves on by itself. Otherwise Haiku proposes the next step, off the
+      // write queue (it takes seconds); saved only if this is still the latest turn.
+      // (serial: read the card once the result above is written)
+      serial(id, async () => undefined)
+        .then(() => streamItem(id))
+        .then(async (item) => {
+          const step = item?.steps[item.stepIndex]
+          if (item?.status === 'needs_review' && step && !step.gate) {
+            await approveStreamItem(item, 'lookout')
+            return null
+          }
+          return item ? suggestNextStep(item, text) : null
+        })
         .then((next) => {
           if (next && current()) serial(id, () => saveStreamNext(id, JSON.stringify(next)))
         })
@@ -224,8 +236,9 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
     // a session only resumes where it ran; a new checkout starts over (setStreamCheckout cleared them)
     const session = item.checkout === checkout ? item.sessionIds.at(-1) : undefined
     const cbs = callbacks(item.id)
-    // a fired watch says why it woke up; a plain retry just carries on
-    const wake = item.waitFor?.resume
+    // a fired watch says why it woke up, a flow's next step what to do now; a plain retry carries on
+    const step = item.steps.length ? stepText(item, item.stepIndex) : null
+    const wake = item.waitFor?.resume ?? (item.gate === 'step' ? (step ?? undefined) : undefined)
     if (session)
       await resumeRun(
         taskId,
@@ -239,7 +252,8 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
         STREAM_DENY,
       )
     else {
-      const prompt = wake ? `${streamPrompt(item)}\n\n${wake}` : streamPrompt(item)
+      const first = wake ?? step
+      const prompt = first ? `${streamPrompt(item)}\n\n${first}` : streamPrompt(item)
       await startRun(taskId, 'Stream', 'stream', prompt, checkout, cbs, STREAM_TOOLS, STREAM_DENY)
     }
   } finally {
@@ -322,6 +336,29 @@ export const acceptProposal = async (item: StreamItem, proposal: Proposal, queue
     `shaped from “${item.title}”`,
   )
   await finishShaping(item.id, proposal.cards.length)
+  notifyStream()
+}
+
+// a flow step as the agent reads it: where it is, and what to do
+const stepText = (item: StreamItem, index: number) =>
+  `Step ${index + 1} of ${item.steps.length}: ${fillStep(item.steps[index], item, item.guidelines)}`
+
+// Approve the card's current result. A flow moves to its next step — queued, or watching GitHub
+// first when that step says so — and only the last step's approval finishes the card.
+export const approveStreamItem = async (item: StreamItem, actor: 'me' | 'lookout') => {
+  const next = advance(item.steps, item.stepIndex)
+  if (next.kind === 'done') {
+    await setStreamStatus(item, 'done')
+    return notifyStream()
+  }
+  const label = `step ${next.index + 1} of ${item.steps.length}`
+  const text = stepText(item, next.index)
+  const w =
+    next.waitFor && item.refKind === 'pr' && item.ref
+      ? waitFor(next.waitFor, item.ref, new Date().toISOString(), text)
+      : null
+  await advanceStreamStep(item.id, next.index, w ? `${label} — ${waitingLabel(w)}` : `${label} queued`, w)
+  logInfo('stream', `${item.id}: ${actor} → ${label}`)
   notifyStream()
 }
 

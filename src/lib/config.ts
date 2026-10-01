@@ -1,6 +1,7 @@
 import { load, type Store } from '@tauri-apps/plugin-store'
 import type { ActionButton, Config, MergePreference, Stage, WatchedRepo } from '../types'
 import { LEGACY_STAGE_IDS } from './stages'
+import { DEFAULT_TEMPLATES, type FlowTemplate, parseSteps } from './streamflow'
 
 // Default buttons reproduce the old fixed actions. /review ships with Claude Code; the follow-up
 // default is a plain prompt. Placeholders: <branch_name>, <pr_id>. Users edit/add/remove these.
@@ -42,6 +43,16 @@ export const migrateButtons = (buttons: ActionButton[]): ActionButton[] =>
     ),
   }))
 
+// stored templates back to templates (a hand-edited config can't break the board); none = the defaults
+const readTemplates = (v: unknown): FlowTemplate[] => {
+  if (!Array.isArray(v)) return DEFAULT_TEMPLATES
+  return v.flatMap((t): FlowTemplate[] => {
+    const steps = parseSteps(t?.steps)
+    if (typeof t?.id !== 'string' || typeof t?.name !== 'string' || !steps.length) return []
+    return [{ id: t.id, name: t.name, steps, guidelines: typeof t.guidelines === 'string' ? t.guidelines : '' }]
+  })
+}
+
 let store: Store | null = null
 
 const getStore = async () => {
@@ -69,6 +80,8 @@ export const getConfig = async (): Promise<Config> => {
     mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
     // on by default: the board is for work agents pick up; a card still waits for me before anything leaves
     streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? true,
+    // the shipped flows until I save my own; a stored list is read as is (steps re-validated)
+    streamTemplates: readTemplates(await s.get<unknown>('streamTemplates')),
   }
 }
 
@@ -90,6 +103,11 @@ export const setStreamSeenAt = async (at: string) => {
 export const setStreamNotifiedAt = async (at: string) => {
   const s = await getStore()
   await s.set('streamNotifiedAt', at)
+}
+
+export const setStreamTemplates = async (templates: FlowTemplate[]) => {
+  const s = await getStore()
+  await s.set('streamTemplates', templates)
 }
 
 export const setStreamAutoRun = async (streamAutoRun: boolean) => {

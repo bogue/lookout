@@ -300,6 +300,24 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
               </div>
             )}
 
+            {item.steps.length > 1 && (
+              // the flow's steps: done ✓, current ●, to come ○
+              <ol className="flex flex-col gap-1 rounded-lg border border-deck-800 p-2.5 text-xs">
+                {item.steps.map((s, k) => (
+                  <li
+                    key={`${s.prompt}-${s.waitFor ?? ''}-${s.gate}`}
+                    className={`flex items-baseline gap-2 ${k === item.stepIndex ? 'text-deck-100' : 'text-deck-500'}`}
+                  >
+                    <span className="w-3 shrink-0">{k < item.stepIndex ? '✓' : k === item.stepIndex ? '●' : '○'}</span>
+                    <span className="min-w-0 flex-1 truncate" title={s.prompt}>
+                      {s.waitFor ? '👁 ' : ''}
+                      {s.prompt}
+                    </span>
+                    {s.gate && <span className="shrink-0 text-deck-600">approve</span>}
+                  </li>
+                ))}
+              </ol>
+            )}
             {item.branch && (
               <p className="flex items-center gap-2 text-xs text-deck-500">
                 <span title={item.checkout ?? undefined}>⎇ {item.branch}</span>
@@ -390,7 +408,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                             onClick={() => onAction(item, 'approve')}
                             className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
                           >
-                            Approve
+                            {item.steps[item.stepIndex + 1] ? `Approve → step ${item.stepIndex + 2}` : 'Approve'}
                           </button>
                           {Date.now() - new Date(e.ts).getTime() < SUGGEST_WAIT_MS ? (
                             <span className="flex items-center gap-1.5 text-xs text-deck-400">

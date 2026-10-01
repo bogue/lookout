@@ -16,6 +16,7 @@ import { type AlertScope, inScope } from './alerts'
 import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
 import { columnOf, type DumpItem, dumpRef, projectGate, projectGateTarget } from './stream'
+import type { FlowTemplate } from './streamflow'
 import { rowToStreamEvent, rowToStreamItem, type StreamEventRow, type StreamItemRow } from './streamrow'
 import type { WaitFor } from './streamwatch'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
@@ -509,6 +510,7 @@ export const addStreamItems = async (
   items: (DumpItem & { body?: string | null })[],
   status: StreamStatus,
   origin?: string,
+  template?: FlowTemplate, // its steps and guidelines are copied onto each card: editing it later changes no card
 ) => {
   const d = await getDb()
   const base = Date.now()
@@ -516,11 +518,24 @@ export const addStreamItems = async (
     const id = crypto.randomUUID()
     const at = new Date(base + i).toISOString()
     await d.execute(
-      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-      [id, it.repo ?? '', it.title, it.body ?? null, it.refKind, it.ref, status, at],
+      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, template_id, steps, guidelines, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+      [
+        id,
+        it.repo ?? '',
+        it.title,
+        it.body ?? null,
+        it.refKind,
+        it.ref,
+        status,
+        template?.id ?? null,
+        JSON.stringify(template?.steps ?? []),
+        template?.guidelines || null,
+        at,
+      ],
     )
-    await logStreamEvent(d, id, 'created', origin ?? (status === 'queued' ? 'dumped straight into Queued' : null))
+    const made = origin ?? (status === 'queued' ? 'dumped straight into Queued' : null)
+    await logStreamEvent(d, id, 'created', template ? `${made ? `${made} · ` : ''}flow: ${template.name}` : made)
   }
 }
 
@@ -665,6 +680,19 @@ export const streamEventsForRef = async (
     itemTitle: r.item_title,
     itemStatus: r.item_status as StreamStatus,
   }))
+}
+
+// A flow moves to its next step: back to Queued (gate `step`: the next run starts that step), or
+// watching GitHub first when the step says so. The session and worktree carry over.
+export const advanceStreamStep = async (id: string, index: number, label: string, w: WaitFor | null) => {
+  const d = await getDb()
+  await d.execute(
+    w
+      ? "UPDATE stream_items SET status = 'watching', gate = 'step', wait_for = $1, step_index = $2, sort_order = NULL, updated_at = $3 WHERE id = $4"
+      : "UPDATE stream_items SET status = 'queued', gate = 'step', wait_for = $1, step_index = $2, sort_order = NULL, updated_at = $3 WHERE id = $4",
+    [w ? JSON.stringify(w) : null, index, now(), id],
+  )
+  await logStreamEvent(d, id, 'step', label, 'lookout')
 }
 
 // Watching: the card waits on GitHub. It keeps its session and worktree; the watch says what to tell
