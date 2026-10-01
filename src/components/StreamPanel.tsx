@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { editStreamItem, streamEvents } from '../lib/db'
 import { resumeInGhostty } from '../lib/ghostty'
 import { logError } from '../lib/log'
@@ -9,6 +9,7 @@ import { nextStepOf } from '../lib/streamnext'
 import { cancelStreamItem, replyStreamItem, streamTaskId } from '../lib/streamrunner'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
+import { CardMenuPopover, MENU_WIDTH } from './CardMenu'
 import { CloseButton } from './CloseButton'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
@@ -97,7 +98,8 @@ export const RefChip = ({ item }: { item: StreamItem }) => {
 // review, and a composer to answer into the same session.
 export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdited, onClose }: Props) => {
   const [title, setTitle] = useState(item.title)
-  const [body, setBody] = useState(item.body ?? '')
+  // notes are hidden for now (no clear use in the thread yet); edits keep what is stored
+  const body = item.body ?? ''
   const [events, setEvents] = useState<StreamEvent[]>([])
   const [reply, setReply] = useState('')
   const runs = useSyncExternalStore(subscribeRuns, getRuns)
@@ -106,6 +108,34 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   const canReply = !!session && !!item.checkout && item.status !== 'running'
   const lastResultAt = events.map((e) => e.kind).lastIndexOf('result')
   const next = nextStepOf(events) // Haiku's suggested next step for the latest result
+
+  // header ⋯ holds the rare ones (skip, remove); the footer keeps the moves that drive the item
+  // forward. Ordering (top/bottom/reset) belongs on the board, not in the thread.
+  const MENU_IDS: StreamActionId[] = ['skip', 'remove']
+  const HIDDEN_IDS: StreamActionId[] = ['approve', 'top', 'bottom', 'reset-priority'] // approve: on the result card
+  const actions = streamActions(item)
+  const menuActions = actions.filter((a) => MENU_IDS.includes(a.id))
+  const footerActions = actions.filter((a) => !MENU_IDS.includes(a.id) && !HIDDEN_IDS.includes(a.id))
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+  const closeMenu = useCallback(() => setMenuAt(null), [])
+
+  // trail lines show one line; a click opens the full text
+  const [expanded, setExpanded] = useState(new Set<number>())
+  const toggle = (id: number) =>
+    setExpanded((s) => {
+      const n = new Set(s)
+      if (!n.delete(id)) n.add(id)
+      return n
+    })
+
+  // a chat: open at the latest message, and follow new ones (an agent's live output included)
+  const threadRef = useRef<HTMLDivElement>(null)
+  const lineCount = run?.lines.length ?? 0
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the counts are the scroll triggers
+  useEffect(() => {
+    const el = threadRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [events.length, lineCount, next])
 
   // a reply into the session: typed in the composer, or one of Haiku's suggested buttons
   const sendReply = async (text: string) => {
@@ -181,10 +211,34 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 <span title={`created by ${item.createdBy}`}>{actorIcon(item.createdBy)}</span>
               </div>
             </div>
+            {menuActions.length > 0 && (
+              <button
+                type="button"
+                title="More actions"
+                aria-label="More actions"
+                // the popover closes on any outside mousedown; this one is the toggle, not "outside"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setMenuAt(menuAt ? null : { x: r.right - MENU_WIDTH, y: r.bottom + 4 })
+                }}
+                className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-deck-600 text-sm text-deck-300 hover:bg-deck-800 hover:text-deck-100"
+              >
+                ⋯
+              </button>
+            )}
+            {menuAt && (
+              <CardMenuPopover
+                at={menuAt}
+                onClose={closeMenu}
+                actions={menuActions}
+                onSelect={(id) => onAction(item, id)}
+              />
+            )}
             <CloseButton onClick={close} />
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+          <div ref={threadRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
             {projectGateTarget(item.gate) && (
               <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                 <p className="text-amber-200">Which project is this for? Haiku couldn't tell from the text.</p>
@@ -202,24 +256,11 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 </div>
               </div>
             )}
-            <details open={!!item.body} className="group text-xs text-deck-400">
-              <summary className="cursor-pointer select-none">Notes for the agent</summary>
-              <textarea
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={3}
-                placeholder="Context for the agent: links, constraints, what done looks like…"
-                className="mt-1.5 w-full rounded-md border border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
-              />
-            </details>
             {dirty && (
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setTitle(item.title)
-                    setBody(item.body ?? '')
-                  }}
+                  onClick={() => setTitle(item.title)}
                   className="cursor-pointer rounded bg-deck-700 px-2 py-1 text-xs hover:bg-deck-600"
                 >
                   Discard
@@ -253,6 +294,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
             {/* the thread: everything that happened to the item, one conversation */}
             <ol className="flex flex-col gap-2.5">
               {events.map((e, i) => {
+                if (e.kind === 'next') return null // shown as buttons on its result, not as a line
                 const lastResult = e.kind === 'result' && i === lastResultAt
                 if (e.kind === 'result')
                   return (
@@ -315,11 +357,17 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                           >
                             Approve
                           </button>
-                          <span className="text-xs text-deck-500">
-                            {Date.now() - new Date(e.ts).getTime() < SUGGEST_WAIT_MS
-                              ? '🤖 Haiku is working out the next step…'
-                              : 'or reply below to send it back with a note'}
-                          </span>
+                          {Date.now() - new Date(e.ts).getTime() < SUGGEST_WAIT_MS ? (
+                            <span className="flex items-center gap-1.5 text-xs text-deck-400">
+                              <span
+                                aria-hidden="true"
+                                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-deck-500 border-t-transparent"
+                              />
+                              Haiku is working out the next step…
+                            </span>
+                          ) : (
+                            <span className="text-xs text-deck-500">or reply below to send it back with a note</span>
+                          )}
                         </div>
                       )}
                     </li>
@@ -333,15 +381,26 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                       {e.text}
                     </li>
                   )
+                // a trail line: one line, the full text on click
+                const open = expanded.has(e.id)
                 return (
-                  <li key={e.id} className="flex items-baseline gap-2 text-xs text-deck-400">
-                    <span title={e.actor} className="shrink-0">
-                      {actorIcon(e.actor)}
-                    </span>
-                    <span className={`min-w-0 flex-1 ${e.kind === 'failed' ? 'text-red-300' : ''}`}>
-                      {eventText(e)}
-                    </span>
-                    <span className="shrink-0 text-deck-500">{messageTime(e.ts)}</span>
+                  <li key={e.id}>
+                    <button
+                      type="button"
+                      onClick={() => toggle(e.id)}
+                      title={open ? undefined : 'Show the full message'}
+                      className="flex w-full cursor-pointer items-baseline gap-2 text-left text-xs text-deck-400 hover:text-deck-300"
+                    >
+                      <span title={e.actor} className="shrink-0">
+                        {actorIcon(e.actor)}
+                      </span>
+                      <span
+                        className={`min-w-0 flex-1 ${open ? 'whitespace-pre-wrap' : 'truncate'} ${e.kind === 'failed' ? 'text-red-300' : ''}`}
+                      >
+                        {eventText(e)}
+                      </span>
+                      <span className="shrink-0 text-deck-500">{messageTime(e.ts)}</span>
+                    </button>
                   </li>
                 )
               })}
@@ -408,27 +467,25 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 </button>
               </div>
             )}
-            <div className="flex flex-wrap gap-1.5">
-              {streamActions(item)
-                .filter((a) => a.id !== 'approve') // the result card carries it
-                .map((a) => (
+            {footerActions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {footerActions.map((a) => (
                   <button
                     key={a.id}
                     type="button"
                     title={a.title}
                     onClick={() => onAction(item, a.id)}
                     className={`cursor-pointer rounded px-2 py-1 text-xs ${
-                      a.danger
-                        ? 'bg-red-600/20 text-red-300 hover:bg-red-600/40'
-                        : a.id === 'run' || a.id === 'retry'
-                          ? 'bg-grass-600 text-white hover:bg-grass-500'
-                          : 'bg-deck-700 hover:bg-deck-600'
+                      a.id === 'run' || a.id === 'retry'
+                        ? 'bg-grass-600 text-white hover:bg-grass-500'
+                        : 'bg-deck-700 hover:bg-deck-600'
                     }`}
                   >
                     {a.label}
                   </button>
                 ))}
-            </div>
+              </div>
+            )}
           </div>
         </>
       )}

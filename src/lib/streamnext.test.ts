@@ -27,6 +27,12 @@ describe('parseNextStep', () => {
     })
   })
 
+  it('reads a null reply as marking it done (how Haiku tends to write it)', () => {
+    expect(parseNextStep('{"headline":"h","actions":[{"label":"Done","reply":null}]}')?.actions).toEqual([
+      { label: 'Done', reply: null },
+    ])
+  })
+
   it('reads the answer inside a code fence', () => {
     expect(parseNextStep('```json\n{"headline":"ok","actions":[{"label":"Done","done":true}]}\n```')).toMatchObject({
       headline: 'ok',

@@ -48,7 +48,8 @@ export const parseNextStep = (text: string): NextStep | null => {
     .flatMap((a): NextAction[] => {
       const label = str(a?.label, 60)
       if (!label) return []
-      if (a?.done === true) return [{ label, reply: null }]
+      // "done": true, or an explicit null reply (Haiku's usual way of writing the Done button)
+      if (a?.done === true || a?.reply === null) return [{ label, reply: null }]
       const reply = str(a?.reply, 2000)
       return reply ? [{ label, reply }] : []
     })
