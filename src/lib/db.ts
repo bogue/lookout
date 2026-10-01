@@ -584,16 +584,24 @@ export const streamItem = async (id: string): Promise<StreamItem | null> => {
 
 // Claimed for a run before its worktree exists, so a second scheduler tick can't pick it again.
 // The rank goes: Active has no manual order.
-// false when it was already running: someone else (a tick, a double click) got there first
+// False when it was already running: someone else (a tick, a double click) got there first. The
+// gate and the watch stay: they say which step to start and why, and are only cleared once the
+// agent really started (markStreamStarted) — a worktree that can't be prepared mustn't lose them.
 export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout'): Promise<boolean> => {
   const d = await getDb()
   const res = await d.execute(
-    "UPDATE stream_items SET status = 'running', gate = NULL, wait_for = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
+    "UPDATE stream_items SET status = 'running', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
     [now(), id],
   )
   if (!res.rowsAffected) return false
   await logStreamEvent(d, id, 'started', text, actor)
   return true
+}
+
+// the agent is running with its step's prompt: what it waited for and which step to start are spent
+export const markStreamStarted = async (id: string) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET gate = NULL, wait_for = NULL WHERE id = $1 AND status = 'running'", [id])
 }
 
 // A session only resumes in the directory it ran in: a new checkout starts the session list over.
@@ -620,7 +628,12 @@ export const addStreamSession = async (id: string, sessionId: string) => {
 export const streamRunResult = async (id: string, text: string) => {
   const d = await getDb()
   const res = await d.execute(
-    "UPDATE stream_items SET status = 'needs_review', gate = 'result', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'running'",
+    // the agent asked a question mid-run (`lookout stream gate --kind question`): that's what waits on me
+    `UPDATE stream_items SET
+       status = CASE WHEN gate = 'question' THEN 'question' ELSE 'needs_review' END,
+       gate = CASE WHEN gate = 'question' THEN 'question' ELSE 'result' END,
+       sort_order = NULL, updated_at = $1
+     WHERE id = $2 AND status = 'running'`,
     [now(), id],
   )
   if (res.rowsAffected) await logStreamEvent(d, id, 'result', text, 'lookout')
@@ -640,10 +653,16 @@ export const streamShapeResult = async (id: string, text: string, proposal: stri
 }
 
 // I took the proposal: the idea became its cards, and is done
-export const finishShaping = async (id: string, created: number) => {
+// Only once: a second click on the proposal finds the idea already done, and creates nothing.
+export const finishShaping = async (id: string, created: number): Promise<boolean> => {
   const d = await getDb()
-  await d.execute("UPDATE stream_items SET status = 'done', gate = NULL, updated_at = $1 WHERE id = $2", [now(), id])
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'done', gate = NULL, updated_at = $1 WHERE id = $2 AND status = 'needs_review'",
+    [now(), id],
+  )
+  if (!res.rowsAffected) return false
   await logStreamEvent(d, id, 'shaped', `became ${created} card${created === 1 ? '' : 's'}`, 'me')
+  return true
 }
 
 // The process ended without an answer. Only an item still running moves: a result already sent it on.
@@ -684,24 +703,73 @@ export const streamEventsForRef = async (
 
 // A flow moves to its next step: back to Queued (gate `step`: the next run starts that step), or
 // watching GitHub first when the step says so. The session and worktree carry over.
-export const advanceStreamStep = async (id: string, index: number, label: string, w: WaitFor | null) => {
+// Guarded on the step it advances from and a status that waits on me: a double click, or my Approve
+// racing the automatic one of an ungated step, moves it once.
+export const advanceStreamStep = async (
+  id: string,
+  from: number,
+  index: number,
+  label: string,
+  w: WaitFor | null,
+): Promise<boolean> => {
   const d = await getDb()
-  await d.execute(
-    w
-      ? "UPDATE stream_items SET status = 'watching', gate = 'step', wait_for = $1, step_index = $2, sort_order = NULL, updated_at = $3 WHERE id = $4"
-      : "UPDATE stream_items SET status = 'queued', gate = 'step', wait_for = $1, step_index = $2, sort_order = NULL, updated_at = $3 WHERE id = $4",
-    [w ? JSON.stringify(w) : null, index, now(), id],
+  const res = await d.execute(
+    `UPDATE stream_items SET status = $1, gate = 'step', wait_for = $2, step_index = $3, sort_order = NULL, updated_at = $4
+     WHERE id = $5 AND step_index = $6 AND status IN ('needs_review', 'question', 'failed', 'interrupted')`,
+    [w ? 'watching' : 'queued', w ? JSON.stringify(w) : null, index, now(), id, from],
   )
+  if (!res.rowsAffected) return false
   await logStreamEvent(d, id, 'step', label, 'lookout')
+  return true
+}
+
+// Stop watching. A flow waiting before its next step goes on with that step now (gate step-now:
+// don't wait again); any other watch hands the card back to me.
+export const unwatchStreamItem = async (item: StreamItem) => {
+  const d = await getDb()
+  const flowWait = item.gate === 'step'
+  const res = await d.execute(
+    `UPDATE stream_items SET status = $1, gate = $2, wait_for = NULL, sort_order = NULL, updated_at = $3
+     WHERE id = $4 AND status = 'watching'`,
+    [flowWait ? 'queued' : 'needs_review', flowWait ? 'step-now' : null, now(), item.id],
+  )
+  if (res.rowsAffected)
+    await logStreamEvent(d, item.id, 'status', flowWait ? 'stopped waiting: next step queued' : 'stopped watching')
+}
+
+// a ci_green watch saw CI leave green: the next green is the one it waits for
+export const armStreamWatch = async (id: string, w: WaitFor) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET wait_for = $1 WHERE id = $2 AND status = 'watching'", [
+    JSON.stringify({ ...w, armed: true }),
+    id,
+  ])
+}
+
+// Every alert the sync derived, archived ones included: archiving an alert in the bell must not
+// stop the Stream card waiting on that event from waking up.
+export const watchAlerts = async (): Promise<{ key: string; kind: string; taskId: string; createdAt: string }[]> => {
+  const d = await getDb()
+  const rows = await d.select<{ key: string; kind: string; task_id: string; created_at: string }[]>(
+    'SELECT key, kind, task_id, created_at FROM alerts',
+  )
+  return rows.map((r) => ({ key: r.key, kind: r.kind, taskId: r.task_id, createdAt: r.created_at }))
 }
 
 // Watching: the card waits on GitHub. It keeps its session and worktree; the watch says what to tell
 // the agent when it fires (streamwatch.ts).
-export const watchStreamItem = async (id: string, w: WaitFor, label: string, actor: 'me' | 'lookout') => {
+// gate 'step': a flow waiting before a step (its resume text is that step); null: a plain watch
+export const watchStreamItem = async (
+  id: string,
+  w: WaitFor,
+  label: string,
+  actor: 'me' | 'lookout',
+  gate: 'step' | null = null,
+) => {
   const d = await getDb()
   await d.execute(
-    "UPDATE stream_items SET status = 'watching', gate = NULL, wait_for = $1, sort_order = NULL, updated_at = $2 WHERE id = $3",
-    [JSON.stringify(w), now(), id],
+    "UPDATE stream_items SET status = 'watching', gate = $1, wait_for = $2, sort_order = NULL, updated_at = $3 WHERE id = $4",
+    [gate, JSON.stringify(w), now(), id],
   )
   await logStreamEvent(d, id, 'watching', label, actor)
 }

@@ -37,7 +37,7 @@ export type Db = {
   // the Stream board (`stream_items`, migration 022)
   streamItems: (filter?: { status?: StreamStatus; repo?: string }) => StreamItem[]
   addStreamItems: (items: DumpItem[], status: 'idea' | 'queued') => string[]
-  streamGate: (id: string, kind: 'result' | 'question', text: string) => boolean
+  streamGate: (id: string, kind: 'result' | 'question', text: string) => 'held' | 'stopped' | false
   streamNote: (id: string, text: string) => void
   close: () => void
 }
@@ -279,8 +279,16 @@ export const openDb = (path = resolveDbPath(), readOnly = false): Db => {
       })
     },
     // An agent stopping on purpose: a result for my review, or a question. Nothing finished moves.
+    // A running card is only held: its agent is still on, and the app writes the stop when the agent's
+    // final answer lands (src/lib/db.ts streamRunResult reads the held gate). Moving it now would lose
+    // that answer, and leave a reply racing a live process. Any other live card stops right away.
     streamGate: (id, kind, text) => {
       requireStream()
+      const held = handle.prepare("UPDATE stream_items SET gate = ? WHERE id = ? AND status = 'running'").run(kind, id)
+      if (Number(held.changes)) {
+        logStream(id, kind === 'question' ? 'question' : 'note', text)
+        return 'held'
+      }
       const status = kind === 'question' ? 'question' : 'needs_review'
       const res = handle
         .prepare(
@@ -290,7 +298,7 @@ export const openDb = (path = resolveDbPath(), readOnly = false): Db => {
         .run(status, kind, new Date().toISOString(), id)
       if (!Number(res.changes)) return false
       logStream(id, kind, text)
-      return true
+      return 'stopped'
     },
     streamNote: (id, text) => {
       requireStream()

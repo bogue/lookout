@@ -120,6 +120,18 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   // a shaping card (read-only agent on an idea): its proposal of cards, while still on the table
   const shaping = item.branch === SHAPE_BRANCH
   const proposal = shaping ? proposalOf(events) : null
+  // taking the proposal: once (the buttons lock), its errors logged rather than lost
+  const [taking, setTaking] = useState(false)
+  const take = async (queue: boolean) => {
+    if (!proposal || taking) return
+    setTaking(true)
+    try {
+      await acceptProposal(item, proposal, queue)
+    } catch (e) {
+      logError('stream', e, 'accept proposal')
+      setTaking(false)
+    }
+  }
 
   // header ⋯ holds the rare ones (skip, remove); the footer keeps the moves that drive the item
   // forward. Ordering (top/bottom/reset) belongs on the board, not in the thread.
@@ -377,7 +389,9 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                                     ? `waits until: ${TRIGGERS.find((t) => t.value === a.watch)?.label.toLowerCase()}, then resumes`
                                     : a.reply
                                       ? `sends: “${a.reply}”`
-                                      : 'marks it done'}
+                                      : item.steps[item.stepIndex + 1]
+                                        ? `approves → step ${item.stepIndex + 2}`
+                                        : 'marks it done'}
                                 </span>
                               </button>
                             ))}
@@ -478,14 +492,16 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => acceptProposal(item, proposal, true)}
+                      onClick={() => take(true)}
+                      disabled={taking}
                       className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
                     >
                       Create {proposal.cards.length} card{proposal.cards.length === 1 ? '' : 's'} in Queued
                     </button>
                     <button
                       type="button"
-                      onClick={() => acceptProposal(item, proposal, false)}
+                      onClick={() => take(false)}
+                      disabled={taking}
                       className="cursor-pointer rounded-md bg-deck-700 px-3 py-1.5 text-sm text-deck-100 hover:bg-deck-600"
                     >
                       In Inbox

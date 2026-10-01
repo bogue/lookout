@@ -47,12 +47,15 @@ const resolveItem = (db: Db, ctx: Ctx): StreamItem => {
     throw new NoMatchError(`no Stream item ${asked}`)
   }
   const cwd = real(process.cwd())
+  // live items only (a finished one keeps its checkout), and never a guess between two in one place
   const inside = items
-    .filter((x) => x.checkout)
+    .filter((x) => x.checkout && x.status !== 'done' && x.status !== 'skipped')
     .map((x) => ({ x, dir: real(x.checkout as string) }))
     .filter(({ dir }) => cwd === dir || cwd.startsWith(dir + sep))
     .sort((a, b) => b.dir.length - a.dir.length)
-  if (inside[0]) return inside[0].x
+  const here = inside.filter(({ dir }) => dir === inside[0]?.dir)
+  if (here.length > 1) throw new AmbiguousError(here.map(({ x }) => ({ id: x.id, branch: x.branch ?? '' })))
+  if (here[0]) return here[0].x
   throw new NoMatchError('no Stream item here — pass --item <id>, or run it inside the item’s worktree')
 }
 
@@ -133,13 +136,20 @@ export const streamCommand = (db: Db, ctx: Ctx): number => {
       ctx.out(`would stop ${item.id.slice(0, 8)} for ${kind}`, { ...itemJson(item), would_gate: kind, dry_run: true })
       return 0
     }
-    if (!db.streamGate(item.id, kind, text))
-      throw new Error(`${item.id.slice(0, 8)} is ${item.status} — nothing to stop`)
-    ctx.out(`${item.id.slice(0, 8)}: waiting for your ${kind === 'question' ? 'answer' : 'review'}`, {
-      ...itemJson(item),
-      status: kind === 'question' ? 'question' : 'needs_review',
-      gate: kind,
-    })
+    const gated = db.streamGate(item.id, kind, text)
+    if (!gated) throw new Error(`${item.id.slice(0, 8)} is ${item.status} — nothing to stop`)
+    const wants = kind === 'question' ? 'answer' : 'review'
+    ctx.out(
+      gated === 'held'
+        ? `${item.id.slice(0, 8)}: noted — it will wait for your ${wants} once you end your turn`
+        : `${item.id.slice(0, 8)}: waiting for your ${wants}`,
+      {
+        ...itemJson(item),
+        status: gated === 'held' ? 'running' : kind === 'question' ? 'question' : 'needs_review',
+        gate: kind,
+        held: gated === 'held',
+      },
+    )
     changed([item.id])
     return 0
   }

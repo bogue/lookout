@@ -6,13 +6,14 @@ import {
   addStreamItems,
   addStreamSession,
   advanceStreamStep,
-  allAlerts,
   allMyPrs,
   allTasks,
+  armStreamWatch,
   claimStreamRun,
   finishShaping,
   fireStreamWatch,
   logStreamReply,
+  markStreamStarted,
   saveStreamNext,
   setStreamCheckout,
   setStreamStatus,
@@ -21,6 +22,8 @@ import {
   streamRunEnded,
   streamRunResult,
   streamShapeResult,
+  unwatchStreamItem,
+  watchAlerts,
   watchStreamItem,
 } from './db'
 import { allowPath } from './fsscope'
@@ -31,7 +34,7 @@ import { advance, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
-import { TRIGGERS, type Trigger, triggerFired, type WaitFor, waitFor, waitingLabel } from './streamwatch'
+import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
 import { parseWorktrees } from './worktrees'
 
 // Runs Stream items: each in its own worktree, its result waiting for me in Needs you. Module
@@ -86,7 +89,13 @@ const worktrees = async (repoPath: string) => parseWorktrees(await git(['worktre
 // to date); new work gets its own branch off origin's default one. Kept on the item, so a retry or a
 // reply lands in the same place.
 const prepareCheckout = async (item: StreamItem, repoPath: string): Promise<{ branch: string; checkout: string }> => {
-  if (item.checkout && item.branch && item.checkout !== repoPath && (await exists(item.checkout).catch(() => false)))
+  if (
+    item.checkout &&
+    item.branch &&
+    item.branch !== SHAPE_BRANCH &&
+    item.checkout !== repoPath &&
+    (await exists(item.checkout).catch(() => false))
+  )
     return { branch: item.branch, checkout: item.checkout }
   await git(['fetch', 'origin', '--prune'], repoPath).catch(() => null) // offline: work from what we have
   await git(['worktree', 'prune'], repoPath).catch(() => null) // forget worktree dirs deleted by hand
@@ -123,6 +132,20 @@ const prepareCheckout = async (item: StreamItem, repoPath: string): Promise<{ br
   else await git(['worktree', 'add', '-b', branch, dir, await defaultBase(repoPath)], repoPath)
   await allowPath(dir)
   return { branch, checkout: dir }
+}
+
+// Shaping reads the project from a detached worktree of its own, never from my clone: the agent is
+// denied every write it could name, but my own Claude settings merge in, and a stray `git stash` or
+// `git switch` there would land on throwaway files instead of my work.
+const shapeCheckout = async (item: StreamItem, repoPath: string): Promise<string> => {
+  const dir = worktreeDir(repoPath, `shape-${item.id.slice(0, 8)}`)
+  if (item.checkout === dir && (await exists(dir).catch(() => false))) return dir
+  await git(['fetch', 'origin', '--prune'], repoPath).catch(() => null)
+  await git(['worktree', 'prune'], repoPath).catch(() => null)
+  if (!(await worktrees(repoPath)).some((w) => w.path === dir))
+    await git(['worktree', 'add', '--detach', dir, await defaultBase(repoPath)], repoPath)
+  await allowPath(dir)
+  return dir
 }
 
 const prBranch = async (repo: string, number: number, repoPath: string) => {
@@ -178,7 +201,7 @@ const callbacks = (id: string, mode: 'work' | 'shape' = 'work') => {
         .then(() => streamItem(id))
         .then(async (item) => {
           const step = item?.steps[item.stepIndex]
-          if (item?.status === 'needs_review' && step && !step.gate) {
+          if (current() && item?.status === 'needs_review' && step && !step.gate) {
             await approveStreamItem(item, 'lookout')
             return null
           }
@@ -213,6 +236,12 @@ const busyCheckout = (checkout: string, taskId: string) =>
 export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], actor: 'me' | 'lookout') => {
   const taskId = streamTaskId(item.id)
   if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
+  // A flow step that waits on GitHub first (the first step included): watch before running it.
+  // `step-now` is my Stop watching — go without waiting; a stored watch means it already fired.
+  const pending = item.steps[item.stepIndex]
+  const stepNotStarted = item.gate === 'step' || (item.stepIndex === 0 && !item.sessionIds.length)
+  if (pending?.waitFor && stepNotStarted && item.gate !== 'step-now' && !item.waitFor && item.refKind === 'pr')
+    return watchStream(item, pending.waitFor, actor, stepText(item, item.stepIndex), 'step')
   starting.add(item.id)
   try {
     if (!(await claimStreamRun(item.id, actor === 'me' ? 'started by hand' : 'picked from Queued', actor))) return
@@ -238,7 +267,8 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
     const cbs = callbacks(item.id)
     // a fired watch says why it woke up, a flow's next step what to do now; a plain retry carries on
     const step = item.steps.length ? stepText(item, item.stepIndex) : null
-    const wake = item.waitFor?.resume ?? (item.gate === 'step' ? (step ?? undefined) : undefined)
+    const freshStep = item.gate === 'step' || item.gate === 'step-now'
+    const wake = item.waitFor?.resume ?? (freshStep ? (step ?? undefined) : undefined)
     if (session)
       await resumeRun(
         taskId,
@@ -256,6 +286,7 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
       const prompt = first ? `${streamPrompt(item)}\n\n${first}` : streamPrompt(item)
       await startRun(taskId, 'Stream', 'stream', prompt, checkout, cbs, STREAM_TOOLS, STREAM_DENY)
     }
+    await markStreamStarted(item.id) // the step's prompt went out: its gate and watch are spent
   } finally {
     starting.delete(item.id)
   }
@@ -277,6 +308,11 @@ export const replyStreamItem = async (item: StreamItem, text: string) => {
     if (!(await claimStreamRun(item.id, 'resumed with my reply', 'me'))) return
     await logStreamReply(item.id, text)
     notifyStream()
+    // a flow step not started yet goes along with my reply, or it would never be sent
+    const stepFirst =
+      (item.gate === 'step' || item.gate === 'step-now') && item.steps[item.stepIndex]
+        ? `${stepText(item, item.stepIndex)}\n\n${text}`
+        : text
     // always a fresh Run: the previous process may still be exiting, and must not touch this one
     if (shaping)
       await resumeRun(
@@ -290,14 +326,16 @@ export const replyStreamItem = async (item: StreamItem, text: string) => {
         SHAPE_TOOLS,
         SHAPE_DENY,
       )
-    else await resumeRun(taskId, 'Stream', 'stream', item.checkout, text, session, callbacks(item.id), ACTION_TOOLS)
+    else
+      await resumeRun(taskId, 'Stream', 'stream', item.checkout, stepFirst, session, callbacks(item.id), ACTION_TOOLS)
+    await markStreamStarted(item.id)
   } finally {
     starting.delete(item.id)
   }
 }
 
-// Shape an Inbox idea: a read-only agent in the project's clone (it changes nothing, so no worktree)
-// asks what it needs and proposes the cards. Its conversation is the item's thread.
+// Shape an Inbox idea: a read-only agent in a throwaway worktree of the project (shapeCheckout) asks
+// what it needs and proposes the cards. Its conversation is the item's thread.
 export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) => {
   const taskId = streamTaskId(item.id)
   const repoPath = repos.find((r) => r.repo === item.repo)?.path
@@ -305,18 +343,26 @@ export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) =>
   starting.add(item.id)
   try {
     if (!(await claimStreamRun(item.id, 'shaping with a read-only agent', 'me'))) return
-    await setStreamCheckout(item.id, SHAPE_BRANCH, repoPath)
     notifyStream()
+    let dir: string
+    try {
+      dir = await shapeCheckout(item, repoPath)
+    } catch (e) {
+      await streamRunEnded(item.id, 'failed', `could not prepare a read-only worktree: ${errText(e)}`)
+      return notifyStream()
+    }
+    await setStreamCheckout(item.id, SHAPE_BRANCH, dir)
     await startRun(
       taskId,
       'Shape',
       'stream',
       shapePrompt(item),
-      repoPath,
+      dir,
       callbacks(item.id, 'shape'),
       SHAPE_TOOLS,
       SHAPE_DENY,
     )
+    await markStreamStarted(item.id)
   } finally {
     starting.delete(item.id)
   }
@@ -324,6 +370,8 @@ export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) =>
 
 // Take a proposal: its cards join the board in the same project and reference, the idea is done
 export const acceptProposal = async (item: StreamItem, proposal: Proposal, queue: boolean) => {
+  // finish first, guarded: a second click finds the idea done and creates nothing
+  if (!(await finishShaping(item.id, proposal.cards.length))) return
   await addStreamItems(
     proposal.cards.map((c) => ({
       title: c.title,
@@ -335,9 +383,11 @@ export const acceptProposal = async (item: StreamItem, proposal: Proposal, queue
     queue ? 'queued' : 'idea',
     `shaped from “${item.title}”`,
   )
-  await finishShaping(item.id, proposal.cards.length)
   notifyStream()
 }
+
+// statuses where a card waits on me, the only ones an approval can move
+const WAITS_ON_ME: StreamItem['status'][] = ['needs_review', 'question', 'failed', 'interrupted']
 
 // a flow step as the agent reads it: where it is, and what to do
 const stepText = (item: StreamItem, index: number) =>
@@ -345,7 +395,10 @@ const stepText = (item: StreamItem, index: number) =>
 
 // Approve the card's current result. A flow moves to its next step — queued, or watching GitHub
 // first when that step says so — and only the last step's approval finishes the card.
-export const approveStreamItem = async (item: StreamItem, actor: 'me' | 'lookout') => {
+export const approveStreamItem = async (snapshot: StreamItem, actor: 'me' | 'lookout') => {
+  // the card as it is now: a double click, or a run Auto-run started meanwhile, must not advance it
+  const item = await streamItem(snapshot.id)
+  if (!item || item.stepIndex !== snapshot.stepIndex || !WAITS_ON_ME.includes(item.status)) return
   const next = advance(item.steps, item.stepIndex)
   if (next.kind === 'done') {
     await setStreamStatus(item, 'done')
@@ -355,37 +408,73 @@ export const approveStreamItem = async (item: StreamItem, actor: 'me' | 'lookout
   const text = stepText(item, next.index)
   const w =
     next.waitFor && item.refKind === 'pr' && item.ref
-      ? waitFor(next.waitFor, item.ref, new Date().toISOString(), text)
+      ? waitFor(next.waitFor, item.ref, new Date().toISOString(), text, await armedAtStart(next.waitFor, item.ref))
       : null
-  await advanceStreamStep(item.id, next.index, w ? `${label} — ${waitingLabel(w)}` : `${label} queued`, w)
+  const moved = await advanceStreamStep(
+    item.id,
+    item.stepIndex,
+    next.index,
+    w ? `${label} — ${waitingLabel(w)}` : `${label} queued`,
+    w,
+  )
+  if (!moved) return
   logInfo('stream', `${item.id}: ${actor} → ${label}`)
   notifyStream()
 }
 
 // Put a card on watch: it waits on its PR instead of on me (Needs you → Active).
-export const watchStream = async (item: StreamItem, trigger: Trigger, actor: 'me' | 'lookout', resume?: string) => {
+// gate 'step': a flow waiting before a step (resume = that step), so Stop watching runs the step
+export const watchStream = async (
+  item: StreamItem,
+  trigger: Trigger,
+  actor: 'me' | 'lookout',
+  resume?: string,
+  gate: 'step' | null = null,
+) => {
   if (item.refKind !== 'pr' || !item.ref) return
-  const w = waitFor(trigger, item.ref, new Date().toISOString(), resume)
-  await watchStreamItem(item.id, w, waitingLabel(w), actor)
+  const w = waitFor(trigger, item.ref, new Date().toISOString(), resume, await armedAtStart(trigger, item.ref))
+  await watchStreamItem(item.id, w, waitingLabel(w), actor, gate)
   notifyStream()
 }
+
+export const unwatchStream = async (item: StreamItem) => {
+  await unwatchStreamItem(item)
+  notifyStream()
+}
+
+// what the sync stored about a PR, from whichever board holds it
+const prFacts = async () => {
+  const [tasks, mine] = await Promise.all([allTasks(), allMyPrs()])
+  return (ref: string) => {
+    const pr = mine.find((p) => p.id === ref)
+    if (pr) return { ciState: pr.ciState, state: pr.state }
+    const task = tasks.find((t) => t.id === ref)
+    return task ? { ciState: task.ciState, state: task.prState } : null
+  }
+}
+
+// A green CI stored when the watch begins is the previous commit's: such a watch waits for CI to
+// leave green first (armed: false). Any other trigger, or a CI not green yet, starts armed.
+const armedAtStart = async (trigger: Trigger, ref: string) =>
+  trigger !== 'ci_green' || (await prFacts())(ref)?.ciState !== 'pass'
 
 // Every watching card against what the sync stored: alerts (author push, review of my PR), CI and
 // PR state. A fired card goes back to Queued; Auto-run resumes it. Database reads only.
 export const checkWatching = async () => {
   const watching = (await streamItems()).filter((x) => x.status === 'watching' && x.waitFor)
   if (!watching.length) return
-  const [alerts, tasks, mine] = await Promise.all([allAlerts(), allTasks(), allMyPrs()])
+  const [rows, prOf] = await Promise.all([watchAlerts(), prFacts()])
+  const alerts = rows.map((a) => ({
+    kind: a.kind,
+    taskId: a.taskId,
+    at: alertAt(a.key, a.kind, a.taskId, a.createdAt),
+  }))
   let fired = 0
   for (const x of watching) {
     const w = x.waitFor as WaitFor
-    const task = tasks.find((t) => t.id === w.ref)
-    const pr = mine.find((p) => p.id === w.ref)
-    const facts = {
-      alerts,
-      pr: pr ? { ciState: pr.ciState, state: pr.state } : task ? { ciState: task.ciState, state: task.prState } : null,
-    }
-    if (!triggerFired(w, facts)) continue
+    const verdict = checkTrigger(w, { alerts, pr: prOf(w.ref) })
+    if (verdict === 'arm') await armStreamWatch(x.id, w)
+    if (verdict !== 'fire') continue
     const what = TRIGGERS.find((t) => t.value === w.trigger)?.label ?? w.trigger
     await fireStreamWatch(x.id, `${what} on #${w.ref.split('#')[1]}`)
     fired++

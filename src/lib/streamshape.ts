@@ -18,17 +18,58 @@ export const SHAPE_TOOLS = [
   'Task',
 ].join(',')
 
+// Denied even when my own Claude settings allow them (deny wins): every write git, gh or the shell
+// offer. It also runs in a throwaway worktree (streamrunner.ts shapeCheckout), so anything missed
+// here lands on scratch files, not my clone.
+const GIT_WRITES = [
+  'commit',
+  'push',
+  'checkout',
+  'switch',
+  'reset',
+  'restore',
+  'stash',
+  'merge',
+  'rebase',
+  'cherry-pick',
+  'revert',
+  'clean',
+  'branch',
+  'tag',
+  'add',
+  'rm',
+  'mv',
+  'worktree',
+  'apply',
+  'am',
+  'fetch',
+  'pull',
+  'diff --output',
+]
+const GH_WRITES = [
+  'api',
+  'pr create',
+  'pr merge',
+  'pr comment',
+  'pr review',
+  'pr close',
+  'pr edit',
+  'pr checkout',
+  'issue create',
+  'issue comment',
+  'issue close',
+  'issue edit',
+  'release',
+  'repo',
+  'workflow run',
+]
 export const SHAPE_DENY = [
   'Edit',
   'Write',
   'NotebookEdit',
-  'Bash(git commit:*)',
-  'Bash(git push:*)',
-  'Bash(git checkout:*)',
-  'Bash(git reset:*)',
-  'Bash(gh api:*)',
-  'Bash(gh pr create:*)',
-  'Bash(gh pr merge:*)',
+  ...GIT_WRITES.map((c) => `Bash(git ${c}:*)`),
+  ...GH_WRITES.map((c) => `Bash(gh ${c}:*)`),
+  ...['rm', 'mv', 'cp', 'touch', 'mkdir', 'tee', 'pnpm', 'npm', 'npx', 'yarn'].map((c) => `Bash(${c}:*)`),
 ].join(',')
 
 export const shapePrompt = (item: { title: string; body: string | null; repo: string }) =>

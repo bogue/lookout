@@ -16,7 +16,19 @@ describe('shape tools', () => {
     expect(SHAPE_TOOLS.split(',')).not.toContain('Edit')
     expect(SHAPE_TOOLS.split(',')).not.toContain('Write')
     expect(SHAPE_DENY.split(',')).toEqual(
-      expect.arrayContaining(['Edit', 'Write', 'Bash(git commit:*)', 'Bash(git push:*)']),
+      expect.arrayContaining([
+        'Edit',
+        'Write',
+        'Bash(git commit:*)',
+        'Bash(git push:*)',
+        'Bash(git stash:*)',
+        'Bash(git switch:*)',
+        'Bash(git worktree:*)',
+        'Bash(rm:*)',
+        'Bash(pnpm:*)',
+        'Bash(gh pr comment:*)',
+        'Bash(gh issue create:*)',
+      ]),
     )
   })
 })

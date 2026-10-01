@@ -109,26 +109,36 @@ describe('lookout stream list', () => {
 })
 
 describe('lookout stream gate', () => {
-  it('stops a running item for my review with the summary as its result', () => {
+  // The agent is still running when it calls the CLI: the card must stay running, or its final
+  // answer (written only for a running card) would be lost. The gate is held for that answer.
+  it('holds a running item for my review, its summary in the trail', () => {
     seed('aaaaaaaa-1', 'running')
     expect(cli('stream', 'gate', '--item', 'aaaaaaaa', '--summary', 'Plan ready: 3 files')).toBe(EXIT.ok)
-    expect(rows('SELECT status, gate FROM stream_items')).toEqual([{ status: 'needs_review', gate: 'result' }])
-    expect(rows("SELECT actor, text FROM stream_events WHERE kind = 'result'")).toEqual([
-      { actor: 'cli', text: 'Plan ready: 3 files' },
+    expect(rows('SELECT status, gate FROM stream_items')).toEqual([{ status: 'running', gate: 'result' }])
+    expect(rows('SELECT actor, kind, text FROM stream_events')).toEqual([
+      { actor: 'cli', kind: 'note', text: 'Plan ready: 3 files' },
     ])
   })
 
-  it('asks me a question', () => {
+  it('holds a question on a running item, for the app to show once the agent stops', () => {
     seed('aaaaaaaa-1', 'running')
     expect(cli('stream', 'gate', '--item', 'aaaaaaaa-1', '--kind', 'question', '--summary', 'v1 or v2 API?')).toBe(
       EXIT.ok,
     )
-    expect(rows('SELECT status, gate FROM stream_items')).toEqual([{ status: 'question', gate: 'question' }])
+    expect(rows('SELECT status, gate FROM stream_items')).toEqual([{ status: 'running', gate: 'question' }])
+    expect(rows('SELECT kind, text FROM stream_events')).toEqual([{ kind: 'question', text: 'v1 or v2 API?' }])
   })
 
-  it('finds the item from the worktree it runs in', () => {
+  it('stops an item that is not running right away', () => {
+    seed('aaaaaaaa-1', 'interrupted')
+    expect(cli('stream', 'gate', '--item', 'aaaaaaaa', '--summary', 'picked it up by hand')).toBe(EXIT.ok)
+    expect(rows('SELECT status, gate FROM stream_items')).toEqual([{ status: 'needs_review', gate: 'result' }])
+  })
+
+  it('finds the item from the worktree it runs in, ignoring finished ones there', () => {
     const checkout = mkdtempSync(join(tmpdir(), 'lookout-wt-'))
-    seed('aaaaaaaa-1', 'running', checkout)
+    seed('aaaaaaaa-1', 'done', checkout)
+    seed('bbbbbbbb-2', 'running', checkout)
     const cwd = process.cwd()
     process.chdir(checkout)
     try {
@@ -136,7 +146,20 @@ describe('lookout stream gate', () => {
     } finally {
       process.chdir(cwd)
     }
-    expect(rows('SELECT status FROM stream_items')).toEqual([{ status: 'needs_review' }])
+    expect(rows("SELECT id FROM stream_items WHERE gate = 'result'")).toEqual([{ id: 'bbbbbbbb-2' }])
+  })
+
+  it('refuses to guess between two live items in the same worktree', () => {
+    const checkout = mkdtempSync(join(tmpdir(), 'lookout-wt-'))
+    seed('aaaaaaaa-1', 'running', checkout)
+    seed('bbbbbbbb-2', 'queued', checkout)
+    const cwd = process.cwd()
+    process.chdir(checkout)
+    try {
+      expect(cli('stream', 'gate', '--summary', 'which one?')).toBe(EXIT.ambiguous)
+    } finally {
+      process.chdir(cwd)
+    }
   })
 
   it('leaves a finished item alone', () => {

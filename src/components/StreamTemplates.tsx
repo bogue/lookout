@@ -18,7 +18,10 @@ const newStep = (): TemplateStep => ({ prompt: '', gate: true })
 export const StreamTemplates = ({ templates, onSave }: Props) => {
   const [draft, setDraft] = useState(templates)
   const [open, setOpen] = useState<string | null>(null)
-  useEffect(() => setDraft(templates), [templates])
+  // Reset the draft only when the saved flows really change: any other setting saved rebuilds the
+  // config (a new array, same content), and that must not wipe what I'm typing here.
+  const saved = JSON.stringify(templates)
+  useEffect(() => setDraft(JSON.parse(saved)), [saved])
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(templates)
   // a flow needs a name and at least one step with a prompt

@@ -41,6 +41,7 @@ import {
   runStreamItem,
   SHAPE_BRANCH,
   shapeStreamItem,
+  unwatchStream,
 } from '../lib/streamrunner'
 import { waitingLabel } from '../lib/streamwatch'
 import { timeAgo } from '../lib/time'
@@ -543,7 +544,11 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
 
   const onAction = (item: StreamItem, action: StreamActionId) => {
     // a flow's approval moves it to its next step; only the last one finishes the card
+    // a shaping card's approval is taking its proposal: that happens in its panel, where the cards show
+    if (action === 'approve' && item.branch === SHAPE_BRANCH) return setOpenId(item.id)
     if (action === 'approve') return write(() => approveStreamItem(item, 'me'), 'stream approve')
+    // a flow waiting before its next step runs that step now; a plain watch hands the card back
+    if (action === 'unwatch') return write(() => unwatchStream(item), 'stream unwatch')
     // shaping: a read-only agent on the idea; a failed shaping turn retries as shaping, not as work
     if (action === 'shape' || (action === 'retry' && item.branch === SHAPE_BRANCH))
       return write(() => shapeStreamItem(item, repos), 'stream shape')
