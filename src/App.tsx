@@ -815,7 +815,11 @@ const App = () => {
             openRequest={streamOpen}
             templates={config.streamTemplates}
             onManageTemplates={() => setView('settings')}
-            watchersOn={config.streamWatchers.filter((w) => w.enabled).length}
+            watchers={config.streamWatchers}
+            onSaveWatchers={async (watchers) => {
+              await setStreamWatchers(watchers)
+              setConfig(await getConfig())
+            }}
             onAutoRun={async (on) => {
               await setStreamAutoRun(on)
               setConfig(await getConfig())
@@ -901,10 +905,6 @@ const App = () => {
             }}
             onSaveMergeMethod={async (m) => {
               await setMergeMethod(m)
-              setConfig(await getConfig())
-            }}
-            onSaveStreamWatchers={async (watchers) => {
-              await setStreamWatchers(watchers)
               setConfig(await getConfig())
             }}
             onSaveStreamTemplates={async (templates) => {

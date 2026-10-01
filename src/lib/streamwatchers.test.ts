@@ -3,10 +3,12 @@ import {
   DEFAULT_WATCHERS,
   dueWatchers,
   matchesOf,
+  parseWatcherCards,
   readWatchers,
   type Watcher,
   type WatchFacts,
   watcherKey,
+  watcherPrompt,
 } from './streamwatchers'
 
 const watcher = (over: Partial<Watcher> = {}): Watcher => ({
@@ -17,6 +19,9 @@ const watcher = (over: Partial<Watcher> = {}): Watcher => ({
   repo: null,
   check: 'review_requested',
   templateId: 'review-cycle',
+  prompt: '',
+  model: 'haiku',
+  tools: '',
   ...over,
 })
 
@@ -125,7 +130,72 @@ describe('readWatchers', () => {
         { id: 'y', name: 'Y', check: 'nope' },
       ]),
     ).toEqual([
-      { id: 'x', name: 'X', enabled: true, every: 1, repo: null, check: 'review_requested', templateId: null },
+      {
+        id: 'x',
+        name: 'X',
+        enabled: true,
+        every: 1,
+        repo: null,
+        check: 'review_requested',
+        templateId: null,
+        prompt: '',
+        model: 'haiku',
+        tools: '',
+      },
     ])
+  })
+
+  it('keeps a prompt watcher only when it has a prompt', () => {
+    const base = {
+      id: 'p',
+      name: 'Sentry',
+      enabled: true,
+      every: 30,
+      check: 'prompt',
+      model: 'sonnet',
+      tools: 'mcp__sentry',
+    }
+    expect(readWatchers([{ ...base, prompt: 'new crashes?' }])[0]).toMatchObject({
+      check: 'prompt',
+      prompt: 'new crashes?',
+      model: 'sonnet',
+      tools: 'mcp__sentry',
+    })
+    expect(readWatchers([{ ...base, prompt: '  ' }])).toEqual([])
+  })
+})
+
+describe('watcherPrompt', () => {
+  it('asks for cards as JSON, with stable keys, and lists what it already made', () => {
+    const p = watcherPrompt(watcher({ check: 'prompt', prompt: 'Any new Sentry crash?', repo: 'owner/app' }), [
+      { key: 'SENTRY-1', title: 'Fix crash in login' },
+    ])
+    expect(p).toContain('Any new Sentry crash?')
+    expect(p).toContain('owner/app')
+    expect(p).toContain('SENTRY-1')
+    expect(p).toContain('"cards"')
+    expect(p).toMatch(/change nothing/i)
+  })
+})
+
+describe('parseWatcherCards', () => {
+  it('reads the cards out of the JSON block', () => {
+    const text =
+      'Found one.\n```json\n{"cards":[{"key":"S-9","title":"Fix crash","notes":"stack: x","ref":"owner/app#4"}]}\n```'
+    expect(parseWatcherCards(text, 'owner/app')).toEqual([
+      { key: 'S-9', title: 'Fix crash', notes: 'stack: x', repo: 'owner/app', ref: 'owner/app#4' },
+    ])
+  })
+
+  it("takes a card's own project, keys a card without one by its title, drops untitled ones", () => {
+    const text = '{"cards":[{"title":"Bump deps","repo":"acme/api"},{"key":"x"}]}'
+    expect(parseWatcherCards(text, null)).toEqual([
+      { key: 'Bump deps', title: 'Bump deps', notes: null, repo: 'acme/api', ref: null },
+    ])
+  })
+
+  it('is no cards for nothing found, or an answer it cannot read', () => {
+    expect(parseWatcherCards('{"cards":[]}', null)).toEqual([])
+    expect(parseWatcherCards('nothing new today', null)).toEqual([])
   })
 })

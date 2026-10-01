@@ -1,3 +1,4 @@
+import { homeDir } from '@tauri-apps/api/path'
 import { exists } from '@tauri-apps/plugin-fs'
 import { Command } from '@tauri-apps/plugin-shell'
 import type { StreamItem, WatchedRepo } from '../types'
@@ -45,7 +46,18 @@ import { assessRisk, needsRiskCheck } from './streamrisk'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
-import { DEFAULT_TASK, dueWatchers, matchesOf, type Watcher, watcherKey } from './streamwatchers'
+import {
+  DEFAULT_TASK,
+  dueWatchers,
+  type Match,
+  matchesOf,
+  parseWatcherCards,
+  type Watcher,
+  type WatcherCheck,
+  type WatchFacts,
+  watcherKey,
+  watcherPrompt,
+} from './streamwatchers'
 import { timeAgo } from './time'
 import { parseWorktrees } from './worktrees'
 
@@ -557,54 +569,113 @@ export const rateWaiting = async (items: StreamItem[]) => {
   }
 }
 
-// Watchers: each due one reads what the sync stored and turns new events into Queued cards (the
-// risk check then decides whether they start without me). An event is turned into a card once; a PR
-// with a live card from the same watcher gets no second one until that one is done or skipped.
-let watching = false
+// Watchers: each due one turns what it finds into Queued cards (the risk check then decides whether
+// they start without me). A structured one reads what the sync stored; a prompt one asks a read-only
+// agent. An event (or a prompt card's key) becomes a card once; a PR with a live card from the same
+// watcher gets no second one until that one is done or skipped. Each run is recorded — when, how
+// many cards, what failed — for the watchers panel.
+const runningWatchers = new Set<string>()
+
+const cardsOf = (w: Watcher, matches: Match[], template: FlowTemplate | undefined) =>
+  matches.map((m) => ({
+    title: template ? `${m.title} (#${m.number})` : DEFAULT_TASK[w.check as Exclude<WatcherCheck, 'prompt'>](m.number),
+    repo: m.repo,
+    refKind: 'pr' as const,
+    ref: m.ref,
+    createdBy: `watcher:${w.id}`,
+    dedupeKey: watcherKey(w, m),
+    gate: template ? 'step-now' : undefined, // the event it waited for already happened
+  }))
+
+// a prompt watcher: a read-only agent checks what I asked, outside my repos, and answers with cards
+const promptCards = async (w: Watcher, known: { key: string; title: string }[], template: FlowTemplate | undefined) => {
+  const tools = [SHAPE_TOOLS, ...w.tools.split(',').map((t) => t.trim())].filter(Boolean).join(',')
+  const out = await Command.create(
+    'claude',
+    [
+      '-p',
+      watcherPrompt(w, known),
+      ...(w.model === 'default' ? [] : ['--model', w.model]),
+      '--allowedTools',
+      tools,
+      '--disallowedTools',
+      SHAPE_DENY,
+      '--no-session-persistence', // a check, not a conversation: no transcript left behind
+    ],
+    { cwd: await homeDir() },
+  ).execute()
+  if (out.code !== 0) throw new Error(out.stderr.trim() || `claude exited ${out.code}`)
+  return parseWatcherCards(out.stdout, w.repo).map((c) => ({
+    title: c.title,
+    body: c.notes,
+    repo: c.repo,
+    refKind: c.ref ? ('pr' as const) : null,
+    ref: c.ref,
+    createdBy: `watcher:${w.id}`,
+    dedupeKey: `${w.id}|${c.key}`,
+    gate: template ? 'step-now' : undefined,
+  }))
+}
+
+const runWatcher = async (
+  w: Watcher,
+  template: FlowTemplate | undefined,
+  facts: WatchFacts,
+  cards: { key: string; title: string; live: boolean }[],
+) => {
+  let fresh: Parameters<typeof addStreamItems>[0]
+  if (w.check === 'prompt') {
+    const mine = cards.filter((c) => c.key.startsWith(`${w.id}|`))
+    const known = mine.slice(-30).map((c) => ({ key: c.key.slice(w.id.length + 1), title: c.title }))
+    fresh = (await promptCards(w, known, template)).filter((c) => !cards.some((k) => k.key === c.dedupeKey))
+  } else {
+    const matches = matchesOf(w, facts).filter((m) => {
+      const key = watcherKey(w, m)
+      const prefix = `${w.id}|${m.ref}|`
+      return !cards.some((c) => c.key === key || (c.live && c.key.startsWith(prefix)))
+    })
+    fresh = cardsOf(w, matches, template)
+  }
+  if (fresh.length) await addStreamItems(fresh, 'queued', `by watcher “${w.name}”`, template)
+  return fresh.length
+}
+
 export const runWatchers = async (watchers: Watcher[], templates: FlowTemplate[]) => {
-  if (watching) return
-  watching = true
+  const runs = await getWatcherRuns()
+  const due = dueWatchers(
+    watchers.filter((w) => !runningWatchers.has(w.id)),
+    Object.fromEntries(Object.entries(runs).map(([id, r]) => [id, r.at])),
+  )
+  if (!due.length) return
+  for (const w of due) runningWatchers.add(w.id)
   try {
-    const due = dueWatchers(watchers, await getWatcherRuns())
-    if (!due.length) return
     const [tasks, myPrs, alerts, cards] = await Promise.all([allTasks(), allMyPrs(), watchAlerts(), watcherCards()])
     const facts = { tasks, myPrs, alerts }
-    let made = 0
-    for (const w of due) {
-      const template = templates.find((t) => t.id === w.templateId)
-      const fresh = matchesOf(w, facts).filter((m) => {
-        const key = watcherKey(w, m)
-        const prefix = `${w.id}|${m.ref}|`
-        return !cards.some((c) => c.key === key || (c.live && c.key.startsWith(prefix)))
-      })
-      if (fresh.length) {
-        await addStreamItems(
-          fresh.map((m) => ({
-            title: template ? `${m.title} (#${m.number})` : DEFAULT_TASK[w.check](m.number),
-            repo: m.repo,
-            refKind: 'pr' as const,
-            ref: m.ref,
-            createdBy: `watcher:${w.id}`,
-            dedupeKey: watcherKey(w, m),
-            gate: template ? 'step-now' : undefined, // the event it waited for already happened
-          })),
-          'queued',
-          `by watcher “${w.name}”`,
-          template,
-        )
-        for (const m of fresh) cards.push({ key: watcherKey(w, m), live: true })
-        made += fresh.length
-      }
-      await setWatcherRun(w.id, new Date().toISOString())
-    }
-    if (made) {
-      logInfo('stream', `watchers made ${made} card${made === 1 ? '' : 's'}`)
-      notifyStream()
-    }
-  } catch (e) {
-    logError('stream', e, 'run watchers')
+    // prompt watchers take seconds to minutes: they run side by side, each recording its own outcome
+    await Promise.all(
+      due.map(async (w) => {
+        const at = new Date().toISOString()
+        try {
+          const made = await runWatcher(
+            w,
+            templates.find((t) => t.id === w.templateId),
+            facts,
+            cards,
+          )
+          await setWatcherRun(w.id, { at, made })
+          if (made) {
+            logInfo('stream', `watcher ${w.name}: ${made} card${made === 1 ? '' : 's'}`)
+            notifyStream()
+          }
+        } catch (e) {
+          logError('stream', e, `watcher ${w.name}`)
+          await setWatcherRun(w.id, { at, made: 0, error: errText(e).slice(0, 300) })
+        }
+      }),
+    )
   } finally {
-    watching = false
+    for (const w of due) runningWatchers.delete(w.id)
+    notifyStream() // the watchers panel shows each last run
   }
 }
 

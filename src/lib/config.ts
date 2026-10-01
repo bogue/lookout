@@ -113,14 +113,21 @@ export const setStreamWatchers = async (watchers: Watcher[]) => {
 }
 
 // when each watcher last ran (watcher id → ISO time): state, not a setting
-export const getWatcherRuns = async (): Promise<Record<string, string>> => {
+// a watcher's last run: when, how many cards it made, and what went wrong if it did
+export type WatcherRun = { at: string; made: number; error?: string }
+
+export const getWatcherRuns = async (): Promise<Record<string, WatcherRun>> => {
   const s = await getStore()
-  return (await s.get<Record<string, string>>('streamWatcherRuns')) ?? {}
+  const raw = (await s.get<Record<string, unknown>>('streamWatcherRuns')) ?? {}
+  // an older build stored the bare time
+  return Object.fromEntries(
+    Object.entries(raw).map(([id, v]) => [id, typeof v === 'string' ? { at: v, made: 0 } : (v as WatcherRun)]),
+  )
 }
 
-export const setWatcherRun = async (id: string, at: string) => {
+export const setWatcherRun = async (id: string, run: WatcherRun) => {
   const s = await getStore()
-  await s.set('streamWatcherRuns', { ...(await getWatcherRuns()), [id]: at })
+  await s.set('streamWatcherRuns', { ...(await getWatcherRuns()), [id]: run })
 }
 
 export const setStreamTemplates = async (templates: FlowTemplate[]) => {

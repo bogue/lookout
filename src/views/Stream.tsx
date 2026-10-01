@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CardMenuPopover, MENU_WIDTH } from '../components/CardMenu'
+import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { PriorityChip } from '../components/PriorityChip'
+import { SidePanel } from '../components/SidePanel'
 import { actorIcon, RefChip, StreamPanel } from '../components/StreamPanel'
+import { StreamWatchers } from '../components/StreamWatchers'
+import { getWatcherRuns, type WatcherRun } from '../lib/config'
 import {
   addStreamItems,
   askStreamProject,
@@ -46,6 +50,7 @@ import {
   unwatchStream,
 } from '../lib/streamrunner'
 import { waitingLabel } from '../lib/streamwatch'
+import type { Watcher } from '../lib/streamwatchers'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamPriority, StreamStatus, WatchedRepo } from '../types'
 
@@ -59,7 +64,8 @@ type Props = {
   openRequest: { id: string; at: number } | null // open this card (a new `at` reopens the same one)
   templates: FlowTemplate[] // flow templates for the dump's picker (Settings → Stream)
   onManageTemplates: () => void // to Settings, where they are edited
-  watchersOn: number // enabled watchers, shown in the header
+  watchers: Watcher[] // rules that create cards (the 👁 side panel edits them)
+  onSaveWatchers: (watchers: Watcher[]) => void
 }
 
 // statuses whose column already says it all get no tag
@@ -480,7 +486,31 @@ const Dump = ({
   )
 }
 
-export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onManageTemplates, watchersOn }: Props) => {
+export const Stream = ({
+  repos,
+  autoRun,
+  onAutoRun,
+  openRequest,
+  templates,
+  onManageTemplates,
+  watchers,
+  onSaveWatchers,
+}: Props) => {
+  const watchersOn = watchers.filter((w) => w.enabled).length
+  // the watchers side panel, and each watcher's last run (re-read on every board change)
+  const [watchersPanel, setWatchersPanel] = useState(false)
+  const [watcherRuns, setWatcherRuns] = useState<Record<string, WatcherRun>>({})
+  useEffect(() => {
+    if (!watchersPanel) return
+    const load = () => {
+      getWatcherRuns()
+        .then(setWatcherRuns)
+        .catch(() => null)
+    }
+    load()
+    return onStreamChange(load)
+  }, [watchersPanel])
+
   const [items, setItems] = useState<StreamItem[]>([])
   const [version, setVersion] = useState(0) // bumped after every write: the open panel re-reads its feed
   const [openId, setOpenId] = useState<string | null>(null)
@@ -656,8 +686,8 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
       <div className="mb-2 flex shrink-0 items-center justify-end gap-3 text-xs text-deck-400">
         <button
           type="button"
-          onClick={onManageTemplates}
-          title="Watchers create cards from what the sync finds — set them up in Settings"
+          onClick={() => setWatchersPanel(true)}
+          title="Watchers create cards on their own — open them here"
           className="cursor-pointer rounded-md px-2 py-1 hover:bg-deck-800 hover:text-deck-200"
         >
           👁 {watchersOn ? `${watchersOn} watcher${watchersOn === 1 ? '' : 's'} on` : 'no watchers'}
@@ -792,6 +822,27 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
           onEdited={reload}
           onClose={() => setOpenId(null)}
         />
+      )}
+      {watchersPanel && (
+        <SidePanel onClose={() => setWatchersPanel(false)}>
+          {({ close }) => (
+            <>
+              <div className="flex shrink-0 items-center gap-2 border-b border-deck-800 p-4">
+                <h2 className="min-w-0 flex-1 text-base font-medium text-white">👁 Watchers</h2>
+                <CloseButton onClick={close} />
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <StreamWatchers
+                  watchers={watchers}
+                  templates={templates}
+                  repos={repos}
+                  runs={watcherRuns}
+                  onSave={onSaveWatchers}
+                />
+              </div>
+            </>
+          )}
+        </SidePanel>
       )}
       {confirm && <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />}
     </div>

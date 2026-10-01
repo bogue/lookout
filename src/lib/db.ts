@@ -554,12 +554,12 @@ export const addStreamItems = async (
 
 // Every card a watcher made, by its dedupe key: an event already turned into a card is never turned
 // into another, and a PR with a live card from the same watcher waits for that one to finish.
-export const watcherCards = async (): Promise<{ key: string; live: boolean }[]> => {
+export const watcherCards = async (): Promise<{ key: string; title: string; live: boolean }[]> => {
   const d = await getDb()
-  const rows = await d.select<{ dedupe_key: string; status: string }[]>(
-    'SELECT dedupe_key, status FROM stream_items WHERE dedupe_key IS NOT NULL',
+  const rows = await d.select<{ dedupe_key: string; title: string; status: string }[]>(
+    'SELECT dedupe_key, title, status FROM stream_items WHERE dedupe_key IS NOT NULL ORDER BY created_at',
   )
-  return rows.map((r) => ({ key: r.dedupe_key, live: r.status !== 'done' && r.status !== 'skipped' }))
+  return rows.map((r) => ({ key: r.dedupe_key, title: r.title, live: r.status !== 'done' && r.status !== 'skipped' }))
 }
 
 // Name an item's project (Haiku's guess, or my pick). A bare #2 in the title now names a PR. An item
