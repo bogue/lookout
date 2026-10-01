@@ -1,5 +1,6 @@
 import type { StreamEvent, StreamItem, StreamStatus } from '../types'
 import { STATUS_LABEL } from './stream'
+import { parseWaitFor } from './streamwatch'
 
 // The `stream_items` columns the board reads (src-tauri/migrations/022_stream.sql). The step/run
 // columns are left out until the dispatch phases read them.
@@ -20,6 +21,7 @@ export type StreamItemRow = {
   branch: string | null
   checkout: string | null
   session_ids: string // JSON array
+  wait_for: string | null // JSON WaitFor
   created_by: string
   created_at: string
   updated_at: string
@@ -68,6 +70,7 @@ export const rowToStreamItem = (r: StreamItemRow): StreamItem => ({
   branch: r.branch,
   checkout: r.checkout,
   sessionIds: sessionIdsOf(r.session_ids),
+  waitFor: parseWaitFor(r.wait_for),
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,

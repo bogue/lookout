@@ -34,6 +34,7 @@ import {
 } from '../lib/stream'
 import { guessProjects } from '../lib/streamproject'
 import { notifyStream, onStreamChange, runStreamItem } from '../lib/streamrunner'
+import { waitingLabel } from '../lib/streamwatch'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
 
@@ -55,6 +56,7 @@ const TAG_CLASS: Partial<Record<StreamStatus, string>> = {
   failed: 'bg-red-500/20 text-red-300',
   interrupted: 'bg-amber-500/20 text-amber-300',
   running: 'animate-pulse bg-amber-500/20 text-amber-300',
+  watching: 'bg-sky-500/15 text-sky-300',
 }
 
 type CardProps = {
@@ -128,7 +130,7 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
         <RefChip item={item} />
         {!QUIET.includes(item.status) && !projectGateTarget(item.gate) && (
           <span className={`rounded px-1 py-0.5 ${TAG_CLASS[item.status] ?? 'bg-deck-700'}`}>
-            {STATUS_LABEL[item.status]}
+            {item.status === 'watching' && item.waitFor ? `👁 ${waitingLabel(item.waitFor)}` : STATUS_LABEL[item.status]}
           </span>
         )}
         <span className="ml-auto shrink-0" title={`created by ${item.createdBy}, ${timeAgo(item.createdAt)}`}>

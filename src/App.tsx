@@ -76,7 +76,7 @@ import {
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { digestOf, waitingCount } from './lib/streamdigest'
-import { notifyStream, onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
+import { checkWatching, notifyStream, onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
@@ -105,6 +105,8 @@ const POLL_MS = 10 * 60 * 1000
 const MIN_PARTIAL_MS = 60 * 1000
 // Stream Auto-run heartbeat: changes already tick it, this only catches what slipped past
 const STREAM_TICK_MS = 30 * 1000
+// Stream Watching: how often cards waiting on GitHub are checked against the synced PR state
+const STREAM_WATCH_MS = 60 * 1000
 // Stream notifications come grouped, at most one per this interval
 const STREAM_DIGEST_MS = 15 * 60 * 1000
 // on the Stream tab with the window focused: what's in Needs you counts as seen
@@ -277,6 +279,17 @@ const App = () => {
     const interval = setInterval(() => {
       check().catch((e) => logError('stream', e, 'notification digest'))
     }, STREAM_DIGEST_MS)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Stream Watching: cards waiting on GitHub are checked against what the sync stored. Database
+  // reads only, so a short interval costs nothing; the sync itself keeps its own pace.
+  useEffect(() => {
+    const check = () => {
+      checkWatching().catch((e) => logError('stream', e, 'check watching'))
+    }
+    check()
+    const interval = setInterval(check, STREAM_WATCH_MS)
     return () => clearInterval(interval)
   }, [])
 

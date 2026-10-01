@@ -4,7 +4,11 @@ import type { StreamItem, WatchedRepo } from '../types'
 import { ACTION_TOOLS } from './claude'
 import {
   addStreamSession,
+  allAlerts,
+  allMyPrs,
+  allTasks,
   claimStreamRun,
+  fireStreamWatch,
   logStreamReply,
   saveStreamNext,
   setStreamCheckout,
@@ -12,6 +16,7 @@ import {
   streamItems,
   streamRunEnded,
   streamRunResult,
+  watchStreamItem,
 } from './db'
 import { allowPath } from './fsscope'
 import { errText, logError, logInfo } from './log'
@@ -19,6 +24,7 @@ import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
 import { suggestNextStep } from './streamnext'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { TRIGGERS, type Trigger, triggerFired, type WaitFor, waitFor, waitingLabel } from './streamwatch'
 import { parseWorktrees } from './worktrees'
 
 // Runs Stream items: each in its own worktree, its result waiting for me in Needs you. Module
@@ -205,19 +211,24 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
     // a session only resumes where it ran; a new checkout starts over (setStreamCheckout cleared them)
     const session = item.checkout === checkout ? item.sessionIds.at(-1) : undefined
     const cbs = callbacks(item.id)
+    // a fired watch says why it woke up; a plain retry just carries on
+    const wake = item.waitFor?.resume
     if (session)
       await resumeRun(
         taskId,
         'Stream',
         'stream',
         checkout,
-        'Continue where you left off.',
+        wake ?? 'Continue where you left off.',
         session,
         cbs,
         STREAM_TOOLS,
         STREAM_DENY,
       )
-    else await startRun(taskId, 'Stream', 'stream', streamPrompt(item), checkout, cbs, STREAM_TOOLS, STREAM_DENY)
+    else {
+      const prompt = wake ? `${streamPrompt(item)}\n\n${wake}` : streamPrompt(item)
+      await startRun(taskId, 'Stream', 'stream', prompt, checkout, cbs, STREAM_TOOLS, STREAM_DENY)
+    }
   } finally {
     starting.delete(item.id)
   }
@@ -240,6 +251,37 @@ export const replyStreamItem = async (item: StreamItem, text: string) => {
   } finally {
     starting.delete(item.id)
   }
+}
+
+// Put a card on watch: it waits on its PR instead of on me (Needs you → Active).
+export const watchStream = async (item: StreamItem, trigger: Trigger, actor: 'me' | 'lookout', resume?: string) => {
+  if (item.refKind !== 'pr' || !item.ref) return
+  const w = waitFor(trigger, item.ref, new Date().toISOString(), resume)
+  await watchStreamItem(item.id, w, waitingLabel(w), actor)
+  notifyStream()
+}
+
+// Every watching card against what the sync stored: alerts (author push, review of my PR), CI and
+// PR state. A fired card goes back to Queued; Auto-run resumes it. Database reads only.
+export const checkWatching = async () => {
+  const watching = (await streamItems()).filter((x) => x.status === 'watching' && x.waitFor)
+  if (!watching.length) return
+  const [alerts, tasks, mine] = await Promise.all([allAlerts(), allTasks(), allMyPrs()])
+  let fired = 0
+  for (const x of watching) {
+    const w = x.waitFor as WaitFor
+    const task = tasks.find((t) => t.id === w.ref)
+    const pr = mine.find((p) => p.id === w.ref)
+    const facts = {
+      alerts,
+      pr: pr ? { ciState: pr.ciState, state: pr.state } : task ? { ciState: task.ciState, state: task.prState } : null,
+    }
+    if (!triggerFired(w, facts)) continue
+    const what = TRIGGERS.find((t) => t.value === w.trigger)?.label ?? w.trigger
+    await fireStreamWatch(x.id, `${what} on #${w.ref.split('#')[1]}`)
+    fired++
+  }
+  if (fired) notifyStream()
 }
 
 // App start: a run can't outlive the app, so a card still "running" with no live run was cut short.

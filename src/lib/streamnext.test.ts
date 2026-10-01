@@ -27,6 +27,19 @@ describe('parseNextStep', () => {
     })
   })
 
+  it('reads a wait-on-GitHub action, and drops an unknown trigger', () => {
+    const json = JSON.stringify({
+      headline: 'h',
+      actions: [
+        { label: "Wait for the author's push", watch: 'author_pushed' },
+        { label: 'Wait for the moon', watch: 'full_moon' },
+      ],
+    })
+    expect(parseNextStep(json)?.actions).toEqual([
+      { label: "Wait for the author's push", reply: null, watch: 'author_pushed' },
+    ])
+  })
+
   it('reads a null reply as marking it done (how Haiku tends to write it)', () => {
     expect(parseNextStep('{"headline":"h","actions":[{"label":"Done","reply":null}]}')?.actions).toEqual([
       { label: 'Done', reply: null },

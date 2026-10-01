@@ -6,7 +6,8 @@ import { logError } from '../lib/log'
 import { getRuns, subscribeRuns } from '../lib/runs'
 import { projectGateTarget, prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
 import { nextStepOf } from '../lib/streamnext'
-import { cancelStreamItem, replyStreamItem, streamTaskId } from '../lib/streamrunner'
+import { cancelStreamItem, replyStreamItem, streamTaskId, watchStream } from '../lib/streamrunner'
+import { TRIGGERS, waitingLabel } from '../lib/streamwatch'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
 import { CardMenuPopover, MENU_WIDTH } from './CardMenu'
@@ -116,6 +117,9 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   const actions = streamActions(item)
   const menuActions = actions.filter((a) => MENU_IDS.includes(a.id))
   const footerActions = actions.filter((a) => !MENU_IDS.includes(a.id) && !HIDDEN_IDS.includes(a.id))
+  // a card about a PR can wait on it once the agent has stopped (and has a session to resume)
+  const canWatch =
+    item.refKind === 'pr' && !!session && ['needs_review', 'question', 'interrupted', 'failed'].includes(item.status)
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
   const closeMenu = useCallback(() => setMenuAt(null), [])
 
@@ -239,6 +243,15 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
           </div>
 
           <div ref={threadRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {item.status === 'watching' && item.waitFor && (
+              <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-200">
+                <span aria-hidden="true">👁</span>
+                <span className="min-w-0 flex-1">
+                  {waitingLabel(item.waitFor)}
+                  <span className="ml-1.5 text-xs text-sky-300/70">since {messageTime(item.waitFor.since)}</span>
+                </span>
+              </div>
+            )}
             {projectGateTarget(item.gate) && (
               <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                 <p className="text-amber-200">Which project is this for? Haiku couldn't tell from the text.</p>
@@ -315,7 +328,13 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                               <button
                                 key={a.label}
                                 type="button"
-                                onClick={() => (a.reply ? sendReply(a.reply) : onAction(item, 'approve'))}
+                                onClick={() =>
+                                  a.watch
+                                    ? watchStream(item, a.watch, 'me')
+                                    : a.reply
+                                      ? sendReply(a.reply)
+                                      : onAction(item, 'approve')
+                                }
                                 className={`flex cursor-pointer flex-col items-start rounded-md px-3 py-2 text-left ${
                                   k === 0
                                     ? 'bg-grass-600 text-white hover:bg-grass-500'
@@ -324,13 +343,17 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                               >
                                 <span className="text-sm font-semibold">{a.label}</span>
                                 <span className={`text-xs ${k === 0 ? 'text-white/75' : 'text-deck-400'}`}>
-                                  {a.reply ? `sends: “${a.reply}”` : 'marks it done'}
+                                  {a.watch
+                                    ? `waits until: ${TRIGGERS.find((t) => t.value === a.watch)?.label.toLowerCase()}, then resumes`
+                                    : a.reply
+                                      ? `sends: “${a.reply}”`
+                                      : 'marks it done'}
                                 </span>
                               </button>
                             ))}
                           </div>
                           <p className="text-xs text-deck-500">
-                            {next.actions.some((a) => !a.reply) ? (
+                            {next.actions.some((a) => !a.reply && !a.watch) ? (
                               'Or'
                             ) : (
                               <>
@@ -485,8 +508,28 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 </button>
               </div>
             )}
-            {footerActions.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
+            {(footerActions.length > 0 || canWatch) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {canWatch && (
+                  // park the card on its PR: it resumes on its own when that happens
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const t = TRIGGERS.find((x) => x.value === e.target.value)
+                      if (t) watchStream(item, t.value, 'me')
+                    }}
+                    aria-label="Wait on GitHub"
+                    title="Wait on GitHub, then resume the agent"
+                    className="cursor-pointer rounded bg-deck-700 px-2 py-1 text-xs text-deck-100 hover:bg-deck-600 focus:outline-none"
+                  >
+                    <option value="">👁 Wait on GitHub…</option>
+                    {TRIGGERS.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {footerActions.map((a) => (
                   <button
                     key={a.id}

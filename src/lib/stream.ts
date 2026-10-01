@@ -104,6 +104,7 @@ export type StreamActionId =
   | 'run'
   | 'approve'
   | 'retry'
+  | 'unwatch'
   | 'pause'
   | 'resume'
   | 'to-inbox'
@@ -122,6 +123,7 @@ const A: Record<StreamActionId, StreamAction> = {
   run: { id: 'run', label: 'Run now', title: 'Start an agent on it now, without waiting for Auto-run' },
   approve: { id: 'approve', label: 'Approve', title: 'The result is good: mark it done' },
   retry: { id: 'retry', label: 'Retry', title: 'Run it again, in the same session when there is one' },
+  unwatch: { id: 'unwatch', label: 'Stop watching', title: 'Stop waiting on GitHub: back to Needs you' },
   pause: { id: 'pause', label: 'Pause', title: 'Keep it queued, but never pick it' },
   resume: { id: 'resume', label: 'Resume', title: 'Pickable again' },
   'to-inbox': { id: 'to-inbox', label: 'Back to Inbox' },
@@ -144,7 +146,7 @@ const STATUS_ACTIONS: Record<StreamStatus, StreamActionId[]> = {
   queued: ['run', 'pause', 'to-inbox', 'done', 'skip'],
   paused: ['resume', 'to-inbox', 'skip'],
   running: [],
-  watching: ['skip'],
+  watching: ['unwatch', 'skip'],
   needs_review: ['approve', 'skip'],
   question: ['skip'],
   failed: ['retry', 'done', 'skip'],
@@ -170,6 +172,7 @@ export const streamActions = (x: StreamItem): StreamAction[] => {
 const ACTION_STATUS: Partial<Record<StreamActionId, StreamStatus>> = {
   queue: 'queued',
   approve: 'done',
+  unwatch: 'needs_review',
   pause: 'paused',
   resume: 'queued',
   'to-inbox': 'idea',

@@ -101,6 +101,7 @@ const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   branch: null,
   checkout: null,
   sessionIds: [],
+  waitFor: null,
   createdBy: 'me',
   createdAt: '2026-09-30T10:00:00.000Z',
   updatedAt: '2026-09-30T10:00:00.000Z',
@@ -231,6 +232,11 @@ describe('streamActions', () => {
 
   it('offers approve on a card waiting for my review', () => {
     expect(actionIds({ status: 'needs_review' })).toEqual(['approve', 'skip', 'top', 'bottom', 'remove'])
+  })
+
+  it('offers stop watching on a card waiting on GitHub', () => {
+    expect(actionIds({ status: 'watching' })[0]).toBe('unwatch')
+    expect(applyStreamAction('watching', 'unwatch')).toBe('needs_review')
   })
 
   it('offers retry on a failed or interrupted card', () => {

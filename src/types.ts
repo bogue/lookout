@@ -1,3 +1,5 @@
+import type { WaitFor } from './lib/streamwatch'
+
 export type Stage =
   | 'discovered'
   | 'watching'
@@ -207,6 +209,7 @@ export type StreamItem = {
   branch: string | null // the branch its agent works on, once a run prepared it
   checkout: string | null // the worktree path its runs use
   sessionIds: string[] // Claude sessions run for it, oldest first
+  waitFor: WaitFor | null // Watching: what on GitHub it waits for (streamwatch.ts)
   createdBy: string // me | cli | watcher:<id>
   createdAt: string
   updatedAt: string

@@ -19,6 +19,7 @@ const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   branch: null,
   checkout: null,
   sessionIds: [],
+  waitFor: null,
   createdBy: 'me',
   createdAt: '2026-10-01T10:00:00.000Z',
   updatedAt: '2026-10-01T10:00:00.000Z',

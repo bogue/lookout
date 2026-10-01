@@ -17,6 +17,7 @@ import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
 import { columnOf, type DumpItem, dumpRef, projectGate, projectGateTarget } from './stream'
 import { rowToStreamEvent, rowToStreamItem, type StreamEventRow, type StreamItemRow } from './streamrow'
+import type { WaitFor } from './streamwatch'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
 let db: Database | null = null
@@ -567,7 +568,7 @@ export const streamItem = async (id: string): Promise<StreamItem | null> => {
 export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout'): Promise<boolean> => {
   const d = await getDb()
   const res = await d.execute(
-    "UPDATE stream_items SET status = 'running', gate = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
+    "UPDATE stream_items SET status = 'running', gate = NULL, wait_for = NULL, sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
     [now(), id],
   )
   if (!res.rowsAffected) return false
@@ -619,6 +620,28 @@ export const streamRunEnded = async (id: string, status: 'failed' | 'interrupted
 export const logStreamReply = async (id: string, text: string) => {
   const d = await getDb()
   await logStreamEvent(d, id, 'reply', text, 'me')
+}
+
+// Watching: the card waits on GitHub. It keeps its session and worktree; the watch says what to tell
+// the agent when it fires (streamwatch.ts).
+export const watchStreamItem = async (id: string, w: WaitFor, label: string, actor: 'me' | 'lookout') => {
+  const d = await getDb()
+  await d.execute(
+    "UPDATE stream_items SET status = 'watching', gate = NULL, wait_for = $1, sort_order = NULL, updated_at = $2 WHERE id = $3",
+    [JSON.stringify(w), now(), id],
+  )
+  await logStreamEvent(d, id, 'watching', label, actor)
+}
+
+// It happened on GitHub: back to Queued, where Auto-run (or Run now) resumes it with the watch's
+// message. Only a card still watching moves — Stop watching won.
+export const fireStreamWatch = async (id: string, text: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'queued', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'watching'",
+    [now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, 'triggered', text, 'github')
 }
 
 // Haiku's suggested next step for the latest result (streamnext.ts), as JSON. Only while the item

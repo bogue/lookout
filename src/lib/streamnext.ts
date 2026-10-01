@@ -1,12 +1,14 @@
 import { Command } from '@tauri-apps/plugin-shell'
 import { errText, logWarn } from './log'
+import { isTrigger, type Trigger } from './streamwatch'
 
 // After an agent's result, Haiku reads it and proposes what I do next — push and open a PR, answer
 // the question it asked, ask for a fix, or call it done — as buttons. A button either sends its reply
 // into the session (shown on the button, so I see exactly what goes out) or marks the card done.
 // Advice only: nothing happens until I click.
 
-export type NextAction = { label: string; reply: string | null } // reply null = mark done
+// reply null + no watch = mark done; watch = wait on GitHub for that, then the agent resumes
+export type NextAction = { label: string; reply: string | null; watch?: Trigger }
 export type NextStep = { headline: string; actions: NextAction[] }
 
 const MAX_INPUT = 8 * 1024
@@ -22,6 +24,7 @@ Decide what I most likely want to do next and offer it as buttons. Typical next 
 Answer with JSON only, no prose:
 {"headline": "<one line: where the task stands>", "actions": [{"label": "<2-6 words>", "reply": "<the exact message to send to the agent>"}, {"label": "Done", "done": true}]}
 At most ${MAX_ACTIONS} actions, the most likely first. Use "done": true instead of "reply" only for marking the task finished.
+When the task is about a pull request and the next move belongs to someone else, offer to wait instead: {"label": "<2-6 words>", "watch": "author_pushed" | "reviewed" | "ci_green" | "merged"} — the agent resumes on its own when that happens.
 
 <task>
 ${task}
@@ -48,6 +51,7 @@ export const parseNextStep = (text: string): NextStep | null => {
     .flatMap((a): NextAction[] => {
       const label = str(a?.label, 60)
       if (!label) return []
+      if (a?.watch !== undefined) return isTrigger(a.watch) ? [{ label, reply: null, watch: a.watch }] : []
       // "done": true, or an explicit null reply (Haiku's usual way of writing the Done button)
       if (a?.done === true || a?.reply === null) return [{ label, reply: null }]
       const reply = str(a?.reply, 2000)
