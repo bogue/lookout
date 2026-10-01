@@ -10,6 +10,7 @@ import type {
   Stage,
   StreamEvent,
   StreamItem,
+  StreamPriority,
   StreamStatus,
 } from '../types'
 import { type AlertScope, inScope } from './alerts'
@@ -590,7 +591,12 @@ export const streamItem = async (id: string): Promise<StreamItem | null> => {
 export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout'): Promise<boolean> => {
   const d = await getDb()
   const res = await d.execute(
-    "UPDATE stream_items SET status = 'running', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status <> 'running'",
+    // a Haiku rating belongs to one visit to Needs you: leaving it clears that (mine stays)
+    `UPDATE stream_items SET status = 'running', sort_order = NULL, updated_at = $1,
+       priority = CASE WHEN priority_source = 'me' THEN priority ELSE NULL END,
+       priority_reason = CASE WHEN priority_source = 'me' THEN priority_reason ELSE NULL END,
+       priority_source = CASE WHEN priority_source = 'me' THEN 'me' ELSE NULL END
+     WHERE id = $2 AND status <> 'running'`,
     [now(), id],
   )
   if (!res.rowsAffected) return false
@@ -828,6 +834,29 @@ export const setStreamOrders = async (orderedIds: string[]) => {
   const cases = orderedIds.map((_, i) => `WHEN $${i + 1} THEN ${(i + 1) * 10}`).join(' ')
   const ids = orderedIds.map((_, i) => `$${i + 1}`).join(', ')
   await d.execute(`UPDATE stream_items SET sort_order = CASE id ${cases} END WHERE id IN (${ids})`, orderedIds)
+}
+
+// Needs you criticality (streampriority.ts). Haiku's lands only on a card still waiting there with no
+// priority yet — never over mine, never on one that moved on meanwhile. Mine always lands, and stays.
+export const setStreamPriority = async (
+  id: string,
+  priority: StreamPriority,
+  reason: string | null,
+  source: 'haiku' | 'me',
+) => {
+  const d = await getDb()
+  if (source === 'me') {
+    await d.execute(
+      "UPDATE stream_items SET priority = $1, priority_reason = NULL, priority_source = 'me' WHERE id = $2",
+      [priority, id],
+    )
+    return logStreamEvent(d, id, 'priority', `set to ${priority}`)
+  }
+  await d.execute(
+    `UPDATE stream_items SET priority = $1, priority_reason = $2, priority_source = 'haiku'
+     WHERE id = $3 AND priority IS NULL AND status IN ('needs_review', 'question', 'failed', 'interrupted')`,
+    [priority, reason, id],
+  )
 }
 
 // back to the column's default order, and hand the priority chip back to Haiku

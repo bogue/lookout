@@ -18,6 +18,7 @@ import {
   markStreamStarted,
   saveStreamNext,
   setStreamCheckout,
+  setStreamPriority,
   setStreamStatus,
   streamEvents,
   streamItem,
@@ -35,9 +36,11 @@ import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
 import { advance, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
+import { localPriority, needsRating, ratePriorities } from './streampriority'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
+import { timeAgo } from './time'
 import { parseWorktrees } from './worktrees'
 
 // Runs Stream items: each in its own worktree, its result waiting for me in Needs you. Module
@@ -499,6 +502,48 @@ export const checkWatching = async () => {
     fired++
   }
   if (fired) notifyStream()
+}
+
+// Needs you criticality: every card that reached it unrated gets one — local rules first, then one
+// Haiku call for the rest. Each card is rated once per visit (claimStreamRun clears Haiku's rating
+// when it leaves); mine is never touched.
+const rating = new Set<string>()
+const WAITS_ON: Partial<Record<StreamItem['status'], string>> = {
+  needs_review: 'my review of its result',
+  question: 'my answer to its question',
+  failed: 'a look at a failed run',
+  interrupted: 'a retry after an interruption',
+}
+export const rateWaiting = async (items: StreamItem[]) => {
+  const todo = items.filter((x) => needsRating(x) && !rating.has(x.id))
+  if (!todo.length) return
+  for (const x of todo) rating.add(x.id)
+  try {
+    const ask: StreamItem[] = []
+    for (const x of todo) {
+      const local = localPriority(x)
+      if (local) await setStreamPriority(x.id, local.priority, local.reason, 'haiku')
+      else ask.push(x)
+    }
+    const cards = await Promise.all(
+      ask.map(async (x) => {
+        const said = (await streamEvents(x.id)).filter((e) => e.kind === 'result' || e.kind === 'question').at(-1)
+        return {
+          title: x.title,
+          waitsOn: WAITS_ON[x.status] ?? x.status,
+          excerpt: said?.text ?? '',
+          waiting: timeAgo(x.updatedAt),
+        }
+      }),
+    )
+    const ratings = await ratePriorities(cards)
+    for (const [i, x] of ask.entries()) await setStreamPriority(x.id, ratings[i].priority, ratings[i].reason, 'haiku')
+    notifyStream()
+  } catch (e) {
+    logError('stream', e, 'rate needs you')
+  } finally {
+    for (const x of todo) rating.delete(x.id)
+  }
 }
 
 // App start: a run can't outlive the app, so a card still "running" with no live run was cut short.

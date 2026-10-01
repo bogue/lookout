@@ -78,7 +78,14 @@ import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { streamCardsByRef } from './lib/stream'
 import { digestOf, waitingCount } from './lib/streamdigest'
-import { checkWatching, notifyStream, onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
+import {
+  checkWatching,
+  notifyStream,
+  onStreamChange,
+  rateWaiting,
+  recoverStreamRuns,
+  tickStream,
+} from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
@@ -253,6 +260,10 @@ const App = () => {
   const streamWaiting = waitingCount(streamAll)
   // the live Stream card working on each PR, for the 🌊 chip on its Reviews / Pull Requests card
   const streamByRef = streamCardsByRef(streamAll)
+  // cards reaching Needs you get their criticality (Haiku, or local rules), whatever tab is open
+  useEffect(() => {
+    rateWaiting(streamAll).catch((e) => logError('stream', e, 'rate needs you'))
+  }, [streamAll])
   // a Stream entry clicked in a PR's history: switch to Stream and open that card there
   const [streamOpen, setStreamOpen] = useState<{ id: string; at: number } | null>(null)
   const viewRef = useRef(view)

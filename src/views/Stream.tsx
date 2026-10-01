@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CardMenuPopover, MENU_WIDTH } from '../components/CardMenu'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
+import { PriorityChip } from '../components/PriorityChip'
 import { actorIcon, RefChip, StreamPanel } from '../components/StreamPanel'
 import {
   addStreamItems,
@@ -8,6 +9,7 @@ import {
   removeStreamItem,
   resetStreamPriority,
   setStreamOrders,
+  setStreamPriority,
   setStreamProject,
   setStreamStatus,
   streamItems,
@@ -45,7 +47,7 @@ import {
 } from '../lib/streamrunner'
 import { waitingLabel } from '../lib/streamwatch'
 import { timeAgo } from '../lib/time'
-import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
+import type { StreamColumn, StreamItem, StreamPriority, StreamStatus, WatchedRepo } from '../types'
 
 // The Stream board: things I dumped for Lookout's agents to work through (AI_TASKS/2026-09-29-stream-tab.md).
 // Manual for now: dump, prioritise by drag, move by hand. Agents pick items up in the next phases.
@@ -73,6 +75,7 @@ const TAG_CLASS: Partial<Record<StreamStatus, string>> = {
 
 type CardProps = {
   busy: boolean // an action on it is still writing: no drag, dimmed
+  onPriority: (p: StreamPriority | null) => void // set my own criticality, or null: back to Haiku
   item: StreamItem
   onOpen: () => void
   onAction: (id: StreamActionId) => void
@@ -80,7 +83,7 @@ type CardProps = {
   onDragEnd: () => void
 }
 
-const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd, busy }: CardProps) => {
+const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd, busy, onPriority }: CardProps) => {
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
   const closeMenu = useCallback(() => setMenuAt(null), [])
   const actions = streamActions(item)
@@ -142,6 +145,7 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd, busy }: CardProp
         ) : (
           <span className="animate-pulse text-deck-500">finding project…</span>
         )}
+        {columnOf(item.status) === 'needs_you' && <PriorityChip item={item} onSet={onPriority} />}
         <RefChip item={item} />
         {item.steps.length > 1 && (
           <span
@@ -734,6 +738,13 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
                       onOpen={() => setOpenId(x.id)}
                       onAction={(a) => onAction(x, a)}
                       busy={busyIds.includes(x.id)}
+                      onPriority={(p) =>
+                        once(
+                          x,
+                          () => (p ? setStreamPriority(x.id, p, null, 'me') : resetStreamPriority(x.id)),
+                          'stream priority',
+                        )
+                      }
                       onDragStart={() => setDragging(x)}
                       onDragEnd={endDrag}
                     />
