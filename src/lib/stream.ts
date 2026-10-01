@@ -104,6 +104,7 @@ export type StreamActionId =
   | 'run'
   | 'approve'
   | 'retry'
+  | 'retry-fresh'
   | 'unwatch'
   | 'shape'
   | 'pause'
@@ -123,7 +124,16 @@ const A: Record<StreamActionId, StreamAction> = {
   queue: { id: 'queue', label: 'Queue', title: 'Move to Queued' },
   run: { id: 'run', label: 'Run now', title: 'Start an agent on it now, without waiting for Auto-run' },
   approve: { id: 'approve', label: 'Approve', title: 'The result is good: mark it done' },
-  retry: { id: 'retry', label: 'Retry', title: 'Run it again, in the same session when there is one' },
+  retry: {
+    id: 'retry',
+    label: 'Retry',
+    title: 'Run it again in the same session, re-sending what never got an answer',
+  },
+  'retry-fresh': {
+    id: 'retry-fresh',
+    label: 'Retry in a new session',
+    title: 'Start over in a fresh session (same worktree), with what never got an answer',
+  },
   unwatch: { id: 'unwatch', label: 'Stop watching', title: 'Stop waiting on GitHub: back to Needs you' },
   shape: {
     id: 'shape',
@@ -155,8 +165,8 @@ const STATUS_ACTIONS: Record<StreamStatus, StreamActionId[]> = {
   watching: ['unwatch', 'skip'],
   needs_review: ['approve', 'skip'],
   question: ['skip'],
-  failed: ['retry', 'done', 'skip'],
-  interrupted: ['retry', 'done', 'skip'],
+  failed: ['retry', 'retry-fresh', 'done', 'skip'],
+  interrupted: ['retry', 'retry-fresh', 'done', 'skip'],
   done: ['requeue'],
   skipped: ['requeue'],
 }

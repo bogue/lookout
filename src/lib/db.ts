@@ -598,6 +598,19 @@ export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lo
   return true
 }
 
+// What a dispatch sent the agent, word for word (my replies are logged as `reply` already): the
+// thread hides it, Retry re-sends it when the turn died before answering (streamrun.ts unanswered).
+export const logStreamSent = async (id: string, text: string) => {
+  const d = await getDb()
+  await logStreamEvent(d, id, 'sent', text, 'lookout')
+}
+
+// Retry in a new session: the old one is left behind (its transcript stays on disk)
+export const clearStreamSessions = async (id: string) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET session_ids = '[]' WHERE id = $1", [id])
+}
+
 // the agent is running with its step's prompt: what it waited for and which step to start are spent
 export const markStreamStarted = async (id: string) => {
   const d = await getDb()

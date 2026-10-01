@@ -69,6 +69,16 @@ export const STREAM_DENY = [
   'Bash(gh api:*)',
 ].join(',')
 
+// What the agent was last sent and never answered: my reply, a step's prompt, a watch's message.
+// Every dispatch logs its input (`sent`, or `reply` for mine); a result, a question or a proposal
+// answers it. A turn that died before answering leaves it here, for Retry to send again.
+const INPUT = ['sent', 'reply']
+const ANSWER = ['result', 'question', 'proposal']
+export const unanswered = (events: { kind: string; text: string | null }[]): string | null => {
+  const last = events.filter((e) => INPUT.includes(e.kind) || ANSWER.includes(e.kind)).at(-1)
+  return last && INPUT.includes(last.kind) ? last.text : null
+}
+
 // a new work item's branch: kebab-case, no `/`, no conventional prefix
 export const streamBranch = (id: string) => `lookout-stream-${id.slice(0, 8)}`
 

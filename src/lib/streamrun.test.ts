@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamItem } from '../types'
-import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 
 const item = (over: Partial<StreamItem> = {}): StreamItem => ({
   id: '3f2a9c10-aaaa-bbbb-cccc-000000000000',
@@ -70,6 +70,28 @@ describe('stream tools', () => {
     expect(denied).toEqual(
       expect.arrayContaining(['Bash(git push:*)', 'Bash(gh pr merge:*)', 'Bash(gh pr create:*)', 'Bash(gh api:*)']),
     )
+  })
+})
+
+describe('unanswered', () => {
+  const ev = (kind: string, text: string | null) => ({ kind, text })
+
+  it('is the last thing sent to the agent when no answer came after it', () => {
+    expect(unanswered([ev('sent', 'Task: fix login'), ev('result', 'done'), ev('reply', 'also the tests')])).toBe(
+      'also the tests',
+    )
+  })
+
+  it('is nothing once the agent answered', () => {
+    expect(unanswered([ev('reply', 'push it'), ev('result', 'pushed')])).toBeNull()
+  })
+
+  it('counts a question or a shaping proposal as an answer too', () => {
+    expect(unanswered([ev('sent', 'shape it'), ev('question', 'which API?')])).toBeNull()
+  })
+
+  it('is nothing when nothing was sent yet', () => {
+    expect(unanswered([ev('created', null)])).toBeNull()
   })
 })
 

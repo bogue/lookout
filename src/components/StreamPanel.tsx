@@ -15,7 +15,7 @@ import {
   watchStream,
 } from '../lib/streamrunner'
 import { proposalOf } from '../lib/streamshape'
-import { TRIGGERS, waitingLabel } from '../lib/streamwatch'
+import { TRIGGERS, type Trigger, waitingLabel } from '../lib/streamwatch'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
 import { CardMenuPopover, MENU_WIDTH } from './CardMenu'
@@ -32,6 +32,10 @@ type Props = {
   version: number // bumped by the board after every write, so the feed re-reads
   repos: string[] // watched owner/repo, for the project picker
   onAction: (item: StreamItem, action: StreamActionId) => void
+  // the card's one-at-a-time lane (Stream.tsx once): the panel's own writes go through it too, and
+  // `busy` greys every button while one is in flight
+  onRun: (fn: () => Promise<unknown>, what: string) => Promise<unknown> | undefined
+  busy: boolean
   onProject: (item: StreamItem, repo: string) => void
   onEdited: () => void
   onClose: () => void
@@ -105,7 +109,7 @@ export const RefChip = ({ item }: { item: StreamItem }) => {
 
 // An item's side panel, a dispatch thread: its trail, the agent's live output, the result I
 // review, and a composer to answer into the same session.
-export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdited, onClose }: Props) => {
+export const StreamPanel = ({ item, version, repos, onAction, onRun, busy, onProject, onEdited, onClose }: Props) => {
   const [title, setTitle] = useState(item.title)
   // notes are hidden for now (no clear use in the thread yet); edits keep what is stored
   const body = item.body ?? ''
@@ -120,18 +124,11 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   // a shaping card (read-only agent on an idea): its proposal of cards, while still on the table
   const shaping = item.branch === SHAPE_BRANCH
   const proposal = shaping ? proposalOf(events) : null
-  // taking the proposal: once (the buttons lock), its errors logged rather than lost
-  const [taking, setTaking] = useState(false)
-  const take = async (queue: boolean) => {
-    if (!proposal || taking) return
-    setTaking(true)
-    try {
-      await acceptProposal(item, proposal, queue)
-    } catch (e) {
-      logError('stream', e, 'accept proposal')
-      setTaking(false)
-    }
+  // taking the proposal: once, through the card's lane (acceptProposal is guarded in the database too)
+  const take = (queue: boolean) => {
+    if (proposal) onRun(() => acceptProposal(item, proposal, queue), 'accept proposal')
   }
+  const watch = (trigger: Trigger) => onRun(() => watchStream(item, trigger, 'me'), 'watch')
 
   // header ⋯ holds the rare ones (skip, remove); the footer keeps the moves that drive the item
   // forward. Ordering (top/bottom/reset) belongs on the board, not in the thread.
@@ -164,22 +161,25 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
     if (el) el.scrollTop = el.scrollHeight
   }, [events.length, lineCount, next])
 
-  // a reply into the session: typed in the composer, or one of Haiku's suggested buttons
+  // A reply into the session: typed in the composer, or one of Haiku's suggested buttons. True only
+  // once it went out; when it couldn't (agent still running, nothing to resume) the text stays.
   const sendReply = async (text: string) => {
-    try {
-      await replyStreamItem(item, text)
-      return true
-    } catch (e) {
-      logError('stream', e, 'reply to stream item')
-      return false
-    }
+    let sent = false
+    await onRun(async () => {
+      try {
+        sent = await replyStreamItem(item, text)
+      } catch (e) {
+        logError('stream', e, 'reply to stream item')
+      }
+    }, 'reply')
+    return sent
   }
 
   const send = async () => {
     const text = reply.trim()
-    if (!text) return
+    if (!text || busy) return
     setReply('')
-    if (!(await sendReply(text))) setReply(text) // keep what I typed
+    if (!(await sendReply(text))) setReply((r) => r || text) // keep what I typed
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the re-read signal
@@ -349,7 +349,8 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
             <ol className="flex flex-col gap-2.5">
               {events.map((e, i) => {
                 // shown as buttons (next step) or as the cards card (proposal), not as a raw line
-                if (e.kind === 'next' || e.kind === 'proposal') return null
+                // sent: the exact text a turn got, kept for Retry — the thread already shows my replies
+                if (e.kind === 'next' || e.kind === 'proposal' || e.kind === 'sent') return null
                 const lastResult = e.kind === 'result' && i === lastResultAt
                 if (e.kind === 'result')
                   return (
@@ -371,12 +372,9 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                                 key={a.label}
                                 type="button"
                                 onClick={() =>
-                                  a.watch
-                                    ? watchStream(item, a.watch, 'me')
-                                    : a.reply
-                                      ? sendReply(a.reply)
-                                      : onAction(item, 'approve')
+                                  a.watch ? watch(a.watch) : a.reply ? sendReply(a.reply) : onAction(item, 'approve')
                                 }
+                                disabled={busy}
                                 className={`flex cursor-pointer flex-col items-start rounded-md px-3 py-2 text-left ${
                                   k === 0
                                     ? 'bg-grass-600 text-white hover:bg-grass-500'
@@ -404,6 +402,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                                 <button
                                   type="button"
                                   onClick={() => onAction(item, 'approve')}
+                                  disabled={busy}
                                   className="cursor-pointer text-deck-300 underline hover:text-deck-100"
                                 >
                                   Mark done
@@ -420,7 +419,8 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                           <button
                             type="button"
                             onClick={() => onAction(item, 'approve')}
-                            className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
+                            disabled={busy}
+                            className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-50"
                           >
                             {item.steps[item.stepIndex + 1] ? `Approve → step ${item.stepIndex + 2}` : 'Approve'}
                           </button>
@@ -493,15 +493,15 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                     <button
                       type="button"
                       onClick={() => take(true)}
-                      disabled={taking}
-                      className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
+                      disabled={busy}
+                      className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-50"
                     >
                       Create {proposal.cards.length} card{proposal.cards.length === 1 ? '' : 's'} in Queued
                     </button>
                     <button
                       type="button"
                       onClick={() => take(false)}
-                      disabled={taking}
+                      disabled={busy}
                       className="cursor-pointer rounded-md bg-deck-700 px-3 py-1.5 text-sm text-deck-100 hover:bg-deck-600"
                     >
                       In Inbox
@@ -569,7 +569,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                 <button
                   type="button"
                   onClick={send}
-                  disabled={!reply.trim()}
+                  disabled={!reply.trim() || busy}
                   title="Send (↵) · new line (⇧↵)"
                   aria-label="Send"
                   className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-grass-600 text-white hover:bg-grass-500 disabled:cursor-default disabled:bg-deck-700 disabled:text-deck-500"
@@ -599,9 +599,10 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                     value=""
                     onChange={(e) => {
                       const t = TRIGGERS.find((x) => x.value === e.target.value)
-                      if (t) watchStream(item, t.value, 'me')
+                      if (t) watch(t.value)
                     }}
                     aria-label="Wait on GitHub"
+                    disabled={busy}
                     title="Wait on GitHub, then resume the agent"
                     className="cursor-pointer rounded bg-deck-700 px-2 py-1 text-xs text-deck-100 hover:bg-deck-600 focus:outline-none"
                   >
@@ -619,6 +620,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                     type="button"
                     title={a.title}
                     onClick={() => onAction(item, a.id)}
+                    disabled={busy}
                     className={`cursor-pointer rounded px-2 py-1 text-xs ${
                       a.id === 'run' || a.id === 'retry'
                         ? 'bg-grass-600 text-white hover:bg-grass-500'

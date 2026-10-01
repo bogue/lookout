@@ -273,6 +273,7 @@ describe('streamActions', () => {
   it('offers retry on a failed or interrupted card', () => {
     expect(actionIds({ status: 'failed' })[0]).toBe('retry')
     expect(actionIds({ status: 'interrupted' })[0]).toBe('retry')
+    expect(actionIds({ status: 'failed' })[1]).toBe('retry-fresh')
   })
 
   it('offers resume on a paused card', () => {

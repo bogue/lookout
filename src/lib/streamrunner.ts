@@ -10,13 +10,16 @@ import {
   allTasks,
   armStreamWatch,
   claimStreamRun,
+  clearStreamSessions,
   finishShaping,
   fireStreamWatch,
   logStreamReply,
+  logStreamSent,
   markStreamStarted,
   saveStreamNext,
   setStreamCheckout,
   setStreamStatus,
+  streamEvents,
   streamItem,
   streamItems,
   streamRunEnded,
@@ -32,7 +35,7 @@ import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
 import { advance, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
-import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
 import { parseWorktrees } from './worktrees'
@@ -231,9 +234,23 @@ const callbacks = (id: string, mode: 'work' | 'shape' = 'work') => {
 const busyCheckout = (checkout: string, taskId: string) =>
   getRuns().some((r) => r.taskId !== taskId && r.repoPath === checkout && r.status === 'running')
 
-// Start (or retry) an item's agent. A retry with a session resumes it in the same worktree. The agent
-// runs with the Stream tools: local git only, nothing it can push or publish on its own.
-export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], actor: 'me' | 'lookout') => {
+// a failed or cut-short turn: what it was sent never got an answer, and a retry sends it again
+const unansweredOf = async (item: StreamItem) =>
+  item.status === 'failed' || item.status === 'interrupted' ? unanswered(await streamEvents(item.id)) : null
+
+// starting over in a new session still carries what never got an answer
+const withLost = (prompt: string, lost: string | null) =>
+  lost && !prompt.includes(lost) ? `${prompt}\n\nMy last message to you, which never got an answer:\n${lost}` : prompt
+
+// Start (or retry) an item's agent. A retry resumes the same session in the same worktree and sends
+// again what the dead turn never answered; `fresh` starts a new session instead. The agent runs with
+// the Stream tools: local git only, nothing it can push or publish on its own.
+export const runStreamItem = async (
+  item: StreamItem,
+  repos: WatchedRepo[],
+  actor: 'me' | 'lookout',
+  opts: { fresh?: boolean } = {},
+) => {
   const taskId = streamTaskId(item.id)
   if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
   // A flow step that waits on GitHub first (the first step included): watch before running it.
@@ -244,6 +261,7 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
     return watchStream(item, pending.waitFor, actor, stepText(item, item.stepIndex), 'step')
   starting.add(item.id)
   try {
+    const lost = await unansweredOf(item)
     if (!(await claimStreamRun(item.id, actor === 'me' ? 'started by hand' : 'picked from Queued', actor))) return
     notifyStream()
     const repoPath = repos.find((r) => r.repo === item.repo)?.path
@@ -262,28 +280,22 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
       await streamRunEnded(item.id, 'failed', `could not prepare a worktree: ${errText(e)}`)
       return notifyStream()
     }
+    if (opts.fresh) await clearStreamSessions(item.id)
     // a session only resumes where it ran; a new checkout starts over (setStreamCheckout cleared them)
-    const session = item.checkout === checkout ? item.sessionIds.at(-1) : undefined
+    const session = !opts.fresh && item.checkout === checkout ? item.sessionIds.at(-1) : undefined
     const cbs = callbacks(item.id)
-    // a fired watch says why it woke up, a flow's next step what to do now; a plain retry carries on
+    // a fired watch says why it woke up, a flow's next step what to do now, a retry what was lost
     const step = item.steps.length ? stepText(item, item.stepIndex) : null
     const freshStep = item.gate === 'step' || item.gate === 'step-now'
     const wake = item.waitFor?.resume ?? (freshStep ? (step ?? undefined) : undefined)
-    if (session)
-      await resumeRun(
-        taskId,
-        'Stream',
-        'stream',
-        checkout,
-        wake ?? 'Continue where you left off.',
-        session,
-        cbs,
-        STREAM_TOOLS,
-        STREAM_DENY,
-      )
-    else {
+    if (session) {
+      const input = wake ?? lost ?? 'Continue where you left off.'
+      await logStreamSent(item.id, input)
+      await resumeRun(taskId, 'Stream', 'stream', checkout, input, session, cbs, STREAM_TOOLS, STREAM_DENY)
+    } else {
       const first = wake ?? step
-      const prompt = first ? `${streamPrompt(item)}\n\n${first}` : streamPrompt(item)
+      const prompt = withLost(first ? `${streamPrompt(item)}\n\n${first}` : streamPrompt(item), lost)
+      await logStreamSent(item.id, prompt)
       await startRun(taskId, 'Stream', 'stream', prompt, checkout, cbs, STREAM_TOOLS, STREAM_DENY)
     }
     await markStreamStarted(item.id) // the step's prompt went out: its gate and watch are spent
@@ -294,18 +306,20 @@ export const runStreamItem = async (item: StreamItem, repos: WatchedRepo[], acto
 
 // My message into the item's session: a note on a result I reject, an answer, "now push it". It is my
 // instruction, so it runs with the regular allowlist (push allowed) instead of the Stream one.
-export const replyStreamItem = async (item: StreamItem, text: string) => {
+// False when it could not go out (no session to resume, or the agent is still running): the caller
+// keeps my text, nothing typed is lost.
+export const replyStreamItem = async (item: StreamItem, text: string): Promise<boolean> => {
   const taskId = streamTaskId(item.id)
   const session = item.sessionIds.at(-1)
-  if (!session || !item.checkout) return
-  if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
+  if (!session || !item.checkout) return false
+  if (starting.has(item.id) || getRun(taskId)?.status === 'running') return false
   starting.add(item.id)
   try {
     // a shaping conversation stays read-only, whoever speaks — keyed on its checkout marker (set by
     // shapeStreamItem, replaced only when real work prepares a worktree), so a failed turn can't
-    // turn a reply into an editing run in my clone
+    // turn a reply into an editing run
     const shaping = item.branch === SHAPE_BRANCH
-    if (!(await claimStreamRun(item.id, 'resumed with my reply', 'me'))) return
+    if (!(await claimStreamRun(item.id, 'resumed with my reply', 'me'))) return false
     await logStreamReply(item.id, text)
     notifyStream()
     // a flow step not started yet goes along with my reply, or it would never be sent
@@ -329,19 +343,22 @@ export const replyStreamItem = async (item: StreamItem, text: string) => {
     else
       await resumeRun(taskId, 'Stream', 'stream', item.checkout, stepFirst, session, callbacks(item.id), ACTION_TOOLS)
     await markStreamStarted(item.id)
+    return true
   } finally {
     starting.delete(item.id)
   }
 }
 
 // Shape an Inbox idea: a read-only agent in a throwaway worktree of the project (shapeCheckout) asks
-// what it needs and proposes the cards. Its conversation is the item's thread.
-export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) => {
+// what it needs and proposes the cards. Its conversation is the item's thread. A retry resumes that
+// conversation with what never got an answer; `fresh` starts it over (carrying that message along).
+export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[], opts: { fresh?: boolean } = {}) => {
   const taskId = streamTaskId(item.id)
   const repoPath = repos.find((r) => r.repo === item.repo)?.path
   if (!repoPath || starting.has(item.id) || getRun(taskId)?.status === 'running') return
   starting.add(item.id)
   try {
+    const lost = await unansweredOf(item)
     if (!(await claimStreamRun(item.id, 'shaping with a read-only agent', 'me'))) return
     notifyStream()
     let dir: string
@@ -351,17 +368,19 @@ export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) =>
       await streamRunEnded(item.id, 'failed', `could not prepare a read-only worktree: ${errText(e)}`)
       return notifyStream()
     }
-    await setStreamCheckout(item.id, SHAPE_BRANCH, dir)
-    await startRun(
-      taskId,
-      'Shape',
-      'stream',
-      shapePrompt(item),
-      dir,
-      callbacks(item.id, 'shape'),
-      SHAPE_TOOLS,
-      SHAPE_DENY,
-    )
+    await setStreamCheckout(item.id, SHAPE_BRANCH, dir) // a new dir clears the sessions
+    if (opts.fresh) await clearStreamSessions(item.id)
+    const session = !opts.fresh && item.checkout === dir ? item.sessionIds.at(-1) : undefined
+    const cbs = callbacks(item.id, 'shape')
+    if (session) {
+      const input = lost ?? 'Continue where you left off.'
+      await logStreamSent(item.id, input)
+      await resumeRun(taskId, 'Shape', 'stream', dir, input, session, cbs, SHAPE_TOOLS, SHAPE_DENY)
+    } else {
+      const prompt = withLost(shapePrompt(item), lost)
+      await logStreamSent(item.id, prompt)
+      await startRun(taskId, 'Shape', 'stream', prompt, dir, cbs, SHAPE_TOOLS, SHAPE_DENY)
+    }
     await markStreamStarted(item.id)
   } finally {
     starting.delete(item.id)

@@ -72,6 +72,7 @@ const TAG_CLASS: Partial<Record<StreamStatus, string>> = {
 }
 
 type CardProps = {
+  busy: boolean // an action on it is still writing: no drag, dimmed
   item: StreamItem
   onOpen: () => void
   onAction: (id: StreamActionId) => void
@@ -79,7 +80,7 @@ type CardProps = {
   onDragEnd: () => void
 }
 
-const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => {
+const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd, busy }: CardProps) => {
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
   const closeMenu = useCallback(() => setMenuAt(null), [])
   const actions = streamActions(item)
@@ -93,7 +94,7 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
         e.preventDefault()
         setMenuAt({ x: e.clientX, y: e.clientY })
       }}
-      draggable={item.status !== 'running'}
+      draggable={item.status !== 'running' && !busy}
       onDragStart={(e) => {
         // WebKit requires setData for the drag to actually start
         e.dataTransfer.setData('text/plain', item.id)
@@ -102,13 +103,15 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd }: CardProps) => 
       }}
       onDragEnd={onDragEnd}
       className={`group relative cursor-pointer rounded-lg border border-deck-700 bg-deck-800/80 p-3 transition-all duration-150 hover:border-deck-600 hover:bg-white/10 ${
-        item.status === 'paused' || item.status === 'skipped'
-          ? 'opacity-60'
-          : item.status === 'running'
-            ? 'card-running'
-            : item.status === 'needs_review'
-              ? 'card-awaiting'
-              : ''
+        busy
+          ? 'cursor-wait opacity-60'
+          : item.status === 'paused' || item.status === 'skipped'
+            ? 'opacity-60'
+            : item.status === 'running'
+              ? 'card-running'
+              : item.status === 'needs_review'
+                ? 'card-awaiting'
+                : ''
       }`}
     >
       {actions.length > 0 && (
@@ -182,7 +185,7 @@ const Dump = ({
   repos: WatchedRepo[]
   slash: SlashEntry[] // my skills and commands, for `/`
   templates: FlowTemplate[]
-  onAdd: (text: string, picked: string | null, queue: boolean, templateId: string | null) => void
+  onAdd: (text: string, picked: string | null, queue: boolean, templateId: string | null) => Promise<unknown>
   onManageTemplates: () => void
 }) => {
   const [text, setText] = useState('')
@@ -190,6 +193,8 @@ const Dump = ({
   const [queue, setQueue] = useState(false) // where the cards land: Inbox (false) or Queued
   const [templateId, setTemplateId] = useState<string | null>(null) // the flow the cards follow
   const [listOpen, setListOpen] = useState(false)
+  // once per dump: a double click or ⌘↵ held down adds the cards one time
+  const adding = useRef(false)
   const listRef = useRef<HTMLDivElement>(null)
   const names = useMemo(() => repos.map((r) => r.repo), [repos])
   // a repo removed from Settings while picked falls back to All; a single project needs no guessing
@@ -262,11 +267,17 @@ const Dump = ({
   if (!repos.length)
     return <p className="text-sm text-deck-400">Add a project in Settings to start dumping work here.</p>
 
-  const add = () => {
-    if (!preview.length) return
-    onAdd(text, picked, queue, templates.some((t) => t.id === templateId) ? templateId : null)
+  const add = async () => {
+    if (!preview.length || adding.current) return
+    adding.current = true
+    const sent = text
     setText('')
     setListOpen(false)
+    try {
+      await onAdd(sent, picked, queue, templates.some((t) => t.id === templateId) ? templateId : null)
+    } finally {
+      adding.current = false
+    }
   }
 
   const lines = text.split('\n').length
@@ -542,24 +553,43 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
     place()
   }, [items, names])
 
+  // One action per card at a time: a second click (or a click on another of its buttons) while the
+  // first is still writing is ignored, on the board and in the panel alike.
+  const busy = useRef(new Set<string>())
+  const [busyIds, setBusyIds] = useState<string[]>([])
+  const once = (item: StreamItem, fn: () => Promise<unknown>, what: string) => {
+    if (busy.current.has(item.id)) return
+    busy.current.add(item.id)
+    setBusyIds([...busy.current])
+    return write(fn, what).finally(() => {
+      busy.current.delete(item.id)
+      setBusyIds([...busy.current])
+    })
+  }
+
   const onAction = (item: StreamItem, action: StreamActionId) => {
-    // a flow's approval moves it to its next step; only the last one finishes the card
     // a shaping card's approval is taking its proposal: that happens in its panel, where the cards show
     if (action === 'approve' && item.branch === SHAPE_BRANCH) return setOpenId(item.id)
-    if (action === 'approve') return write(() => approveStreamItem(item, 'me'), 'stream approve')
+    // a flow's approval moves it to its next step; only the last one finishes the card
+    if (action === 'approve') return once(item, () => approveStreamItem(item, 'me'), 'stream approve')
     // a flow waiting before its next step runs that step now; a plain watch hands the card back
-    if (action === 'unwatch') return write(() => unwatchStream(item), 'stream unwatch')
+    if (action === 'unwatch') return once(item, () => unwatchStream(item), 'stream unwatch')
     // shaping: a read-only agent on the idea; a failed shaping turn retries as shaping, not as work
-    if (action === 'shape' || (action === 'retry' && item.branch === SHAPE_BRANCH))
-      return write(() => shapeStreamItem(item, repos), 'stream shape')
-    if (action === 'run' || action === 'retry') return write(() => runStreamItem(item, repos, 'me'), `stream ${action}`)
+    const shaping = item.branch === SHAPE_BRANCH
+    if (action === 'shape' || (shaping && (action === 'retry' || action === 'retry-fresh')))
+      return once(item, () => shapeStreamItem(item, repos, { fresh: action === 'retry-fresh' }), 'stream shape')
+    if (action === 'run' || action === 'retry' || action === 'retry-fresh')
+      return once(item, () => runStreamItem(item, repos, 'me', { fresh: action === 'retry-fresh' }), `stream ${action}`)
+    return once(item, async () => apply(item, action), `stream ${action}`)
+  }
+
+  // the board's own moves: status, order, removal
+  const apply = async (item: StreamItem, action: StreamActionId) => {
     const status = applyStreamAction(item.status, action)
-    if (status) return write(() => setStreamStatus(item, status, entryRank(items, status)), `stream ${action}`)
-    if (action === 'top' || action === 'bottom') {
-      const column = sortColumn(items, columnOf(item.status))
-      return write(() => setStreamOrders(movedIds(column, item.id, action)), `stream ${action}`)
-    }
-    if (action === 'reset-priority') return write(() => resetStreamPriority(item.id), 'stream reset priority')
+    if (status) return setStreamStatus(item, status, entryRank(items, status))
+    if (action === 'top' || action === 'bottom')
+      return setStreamOrders(movedIds(sortColumn(items, columnOf(item.status)), item.id, action))
+    if (action === 'reset-priority') return resetStreamPriority(item.id)
     if (action === 'remove')
       setConfirm({
         title: 'Remove this item?',
@@ -567,7 +597,7 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
         confirmLabel: 'Remove',
         onConfirm: () => {
           if (openId === item.id) setOpenId(null)
-          write(() => removeStreamItem(item.id), 'remove stream item')
+          once(item, () => removeStreamItem(item.id), 'remove stream item')
         },
       })
   }
@@ -596,10 +626,14 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
     const idx = before ? rest.findIndex((x) => x.id === before.id) : rest.length
     const at = idx < 0 ? rest.length : idx
     const ordered = [...rest.slice(0, at), card, ...rest.slice(at)].map((x) => x.id)
-    write(async () => {
-      await setStreamStatus(card, status) // no-op for a reorder
-      await setStreamOrders(ordered)
-    }, 'stream drop')
+    once(
+      card,
+      async () => {
+        await setStreamStatus(card, status) // no-op for a reorder
+        await setStreamOrders(ordered)
+      },
+      'stream drop',
+    )
   }
 
   const open = items.find((x) => x.id === openId) ?? null
@@ -699,6 +733,7 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
                       item={x}
                       onOpen={() => setOpenId(x.id)}
                       onAction={(a) => onAction(x, a)}
+                      busy={busyIds.includes(x.id)}
                       onDragStart={() => setDragging(x)}
                       onDragEnd={endDrag}
                     />
@@ -723,6 +758,8 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
           version={version}
           repos={names}
           onAction={onAction}
+          onRun={(fn, what) => once(open, fn, what)}
+          busy={busyIds.includes(open.id)}
           onProject={(x, repo) => write(() => setStreamProject(x, repo, 'me'), 'set stream project')}
           onEdited={reload}
           onClose={() => setOpenId(null)}
