@@ -112,6 +112,7 @@ describe('syncAll — PR state reconciliation', () => {
       mergeMethod: 'merge',
       streamAutoRun: false,
       streamTemplates: [],
+      streamWatchers: [],
     })
     // PR is no longer in the open list (it merged/closed on GitHub)
     vi.mocked(listOpenPrs).mockResolvedValue([])
@@ -196,6 +197,7 @@ describe('syncAll — a local scan that fails', () => {
       mergeMethod: 'merge',
       streamAutoRun: false,
       streamTemplates: [],
+      streamWatchers: [],
     })
     vi.mocked(allTasks).mockResolvedValue([])
     vi.mocked(listOpenPrs).mockResolvedValue([theirPr])
@@ -270,6 +272,7 @@ describe('syncAll — capturing a review the session never exported', () => {
       mergeMethod: 'merge',
       streamAutoRun: false,
       streamTemplates: [],
+      streamWatchers: [],
     })
     vi.mocked(allTasks).mockResolvedValue([])
     vi.mocked(listOpenPrs).mockResolvedValue([openPr] as unknown as Awaited<ReturnType<typeof listOpenPrs>>)
@@ -400,6 +403,7 @@ describe('captureRun — a button run whose turn just finished', () => {
       mergeMethod: 'merge',
       streamAutoRun: false,
       streamTemplates: [],
+      streamWatchers: [],
     })
     vi.mocked(scanReviewFiles).mockResolvedValue(new Map())
     vi.mocked(capturedCliTaskIds).mockResolvedValue(new Set())

@@ -508,7 +508,9 @@ export const streamEvents = async (itemId: string): Promise<StreamEvent[]> => {
 // An item with no project yet is stored with repo '' until Haiku (or I) name one.
 // `origin` says where the items came from in their trail (a shaped idea), else the dump
 export const addStreamItems = async (
-  items: (DumpItem & { body?: string | null })[],
+  // createdBy: who made it (a watcher signs `watcher:<id>`); dedupeKey: a watcher's event key;
+  // gate: a starting marker (a watcher's card skips its flow's first wait — the event already happened)
+  items: (DumpItem & { body?: string | null; createdBy?: string; dedupeKey?: string; gate?: string })[],
   status: StreamStatus,
   origin?: string,
   template?: FlowTemplate, // its steps and guidelines are copied onto each card: editing it later changes no card
@@ -519,8 +521,9 @@ export const addStreamItems = async (
     const id = crypto.randomUUID()
     const at = new Date(base + i).toISOString()
     await d.execute(
-      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, template_id, steps, guidelines, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, template_id, steps, guidelines,
+         created_by, dedupe_key, gate, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
       [
         id,
         it.repo ?? '',
@@ -532,12 +535,31 @@ export const addStreamItems = async (
         template?.id ?? null,
         JSON.stringify(template?.steps ?? []),
         template?.guidelines || null,
+        it.createdBy ?? 'me',
+        it.dedupeKey ?? null,
+        it.gate ?? null,
         at,
       ],
     )
     const made = origin ?? (status === 'queued' ? 'dumped straight into Queued' : null)
-    await logStreamEvent(d, id, 'created', template ? `${made ? `${made} · ` : ''}flow: ${template.name}` : made)
+    await logStreamEvent(
+      d,
+      id,
+      'created',
+      template ? `${made ? `${made} · ` : ''}flow: ${template.name}` : made,
+      it.createdBy ?? 'me',
+    )
   }
+}
+
+// Every card a watcher made, by its dedupe key: an event already turned into a card is never turned
+// into another, and a PR with a live card from the same watcher waits for that one to finish.
+export const watcherCards = async (): Promise<{ key: string; live: boolean }[]> => {
+  const d = await getDb()
+  const rows = await d.select<{ dedupe_key: string; status: string }[]>(
+    'SELECT dedupe_key, status FROM stream_items WHERE dedupe_key IS NOT NULL',
+  )
+  return rows.map((r) => ({ key: r.dedupe_key, live: r.status !== 'done' && r.status !== 'skipped' }))
 }
 
 // Name an item's project (Haiku's guess, or my pick). A bare #2 in the title now names a PR. An item

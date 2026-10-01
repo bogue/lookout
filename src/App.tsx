@@ -27,6 +27,7 @@ import {
   setStreamNotifiedAt,
   setStreamSeenAt,
   setStreamTemplates,
+  setStreamWatchers,
 } from './lib/config'
 import {
   addSessionId,
@@ -84,6 +85,7 @@ import {
   onStreamChange,
   rateWaiting,
   recoverStreamRuns,
+  runWatchers,
   tickStream,
 } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
@@ -143,6 +145,7 @@ const App = () => {
     mergeMethod: 'merge',
     streamAutoRun: false,
     streamTemplates: [],
+    streamWatchers: [],
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -301,6 +304,19 @@ const App = () => {
     }, STREAM_DIGEST_MS)
     return () => clearInterval(interval)
   }, [])
+
+  // Stream watchers: each runs on its own interval (dueWatchers); this only asks every minute who is
+  // due. Database reads only — the sync keeps its own pace.
+  const { streamWatchers, streamTemplates } = config
+  useEffect(() => {
+    if (!streamWatchers.some((w) => w.enabled)) return
+    const run = () => {
+      runWatchers(streamWatchers, streamTemplates).catch((e) => logError('stream', e, 'run watchers'))
+    }
+    run()
+    const interval = setInterval(run, STREAM_WATCH_MS)
+    return () => clearInterval(interval)
+  }, [streamWatchers, streamTemplates])
 
   // Stream Watching: cards waiting on GitHub are checked against what the sync stored. Database
   // reads only, so a short interval costs nothing; the sync itself keeps its own pace.
@@ -799,6 +815,7 @@ const App = () => {
             openRequest={streamOpen}
             templates={config.streamTemplates}
             onManageTemplates={() => setView('settings')}
+            watchersOn={config.streamWatchers.filter((w) => w.enabled).length}
             onAutoRun={async (on) => {
               await setStreamAutoRun(on)
               setConfig(await getConfig())
@@ -884,6 +901,10 @@ const App = () => {
             }}
             onSaveMergeMethod={async (m) => {
               await setMergeMethod(m)
+              setConfig(await getConfig())
+            }}
+            onSaveStreamWatchers={async (watchers) => {
+              await setStreamWatchers(watchers)
               setConfig(await getConfig())
             }}
             onSaveStreamTemplates={async (templates) => {

@@ -2,6 +2,7 @@ import { load, type Store } from '@tauri-apps/plugin-store'
 import type { ActionButton, Config, MergePreference, Stage, WatchedRepo } from '../types'
 import { LEGACY_STAGE_IDS } from './stages'
 import { DEFAULT_TEMPLATES, type FlowTemplate, parseSteps } from './streamflow'
+import { readWatchers, type Watcher } from './streamwatchers'
 
 // Default buttons reproduce the old fixed actions. /review ships with Claude Code; the follow-up
 // default is a plain prompt. Placeholders: <branch_name>, <pr_id>. Users edit/add/remove these.
@@ -82,6 +83,7 @@ export const getConfig = async (): Promise<Config> => {
     streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? true,
     // the shipped flows until I save my own; a stored list is read as is (steps re-validated)
     streamTemplates: readTemplates(await s.get<unknown>('streamTemplates')),
+    streamWatchers: readWatchers(await s.get<unknown>('streamWatchers')),
   }
 }
 
@@ -103,6 +105,22 @@ export const setStreamSeenAt = async (at: string) => {
 export const setStreamNotifiedAt = async (at: string) => {
   const s = await getStore()
   await s.set('streamNotifiedAt', at)
+}
+
+export const setStreamWatchers = async (watchers: Watcher[]) => {
+  const s = await getStore()
+  await s.set('streamWatchers', watchers)
+}
+
+// when each watcher last ran (watcher id → ISO time): state, not a setting
+export const getWatcherRuns = async (): Promise<Record<string, string>> => {
+  const s = await getStore()
+  return (await s.get<Record<string, string>>('streamWatcherRuns')) ?? {}
+}
+
+export const setWatcherRun = async (id: string, at: string) => {
+  const s = await getStore()
+  await s.set('streamWatcherRuns', { ...(await getWatcherRuns()), [id]: at })
 }
 
 export const setStreamTemplates = async (templates: FlowTemplate[]) => {

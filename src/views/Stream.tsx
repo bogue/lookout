@@ -59,6 +59,7 @@ type Props = {
   openRequest: { id: string; at: number } | null // open this card (a new `at` reopens the same one)
   templates: FlowTemplate[] // flow templates for the dump's picker (Settings → Stream)
   onManageTemplates: () => void // to Settings, where they are edited
+  watchersOn: number // enabled watchers, shown in the header
 }
 
 // statuses whose column already says it all get no tag
@@ -479,7 +480,7 @@ const Dump = ({
   )
 }
 
-export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onManageTemplates }: Props) => {
+export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onManageTemplates, watchersOn }: Props) => {
   const [items, setItems] = useState<StreamItem[]>([])
   const [version, setVersion] = useState(0) // bumped after every write: the open panel re-reads its feed
   const [openId, setOpenId] = useState<string | null>(null)
@@ -653,6 +654,14 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest, templates, onMa
   return (
     <div className="flex h-full flex-col">
       <div className="mb-2 flex shrink-0 items-center justify-end gap-3 text-xs text-deck-400">
+        <button
+          type="button"
+          onClick={onManageTemplates}
+          title="Watchers create cards from what the sync finds — set them up in Settings"
+          className="cursor-pointer rounded-md px-2 py-1 hover:bg-deck-800 hover:text-deck-200"
+        >
+          👁 {watchersOn ? `${watchersOn} watcher${watchersOn === 1 ? '' : 's'} on` : 'no watchers'}
+        </button>
         <span>{items.filter((x) => x.status === 'running').length} running</span>
         <button
           type="button"

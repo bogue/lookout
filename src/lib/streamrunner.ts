@@ -2,6 +2,7 @@ import { exists } from '@tauri-apps/plugin-fs'
 import { Command } from '@tauri-apps/plugin-shell'
 import type { StreamItem, WatchedRepo } from '../types'
 import { ACTION_TOOLS } from './claude'
+import { getWatcherRuns, setWatcherRun } from './config'
 import {
   addStreamItems,
   addStreamSession,
@@ -30,19 +31,21 @@ import {
   streamShapeResult,
   unwatchStreamItem,
   watchAlerts,
+  watcherCards,
   watchStreamItem,
 } from './db'
 import { allowPath } from './fsscope'
 import { errText, logError, logInfo } from './log'
 import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
-import { advance, fillStep } from './streamflow'
+import { advance, type FlowTemplate, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
 import { localPriority, needsRating, ratePriorities } from './streampriority'
 import { assessRisk, needsRiskCheck } from './streamrisk'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
+import { DEFAULT_TASK, dueWatchers, matchesOf, type Watcher, watcherKey } from './streamwatchers'
 import { timeAgo } from './time'
 import { parseWorktrees } from './worktrees'
 
@@ -551,6 +554,57 @@ export const rateWaiting = async (items: StreamItem[]) => {
     logError('stream', e, 'rate needs you')
   } finally {
     for (const x of todo) rating.delete(x.id)
+  }
+}
+
+// Watchers: each due one reads what the sync stored and turns new events into Queued cards (the
+// risk check then decides whether they start without me). An event is turned into a card once; a PR
+// with a live card from the same watcher gets no second one until that one is done or skipped.
+let watching = false
+export const runWatchers = async (watchers: Watcher[], templates: FlowTemplate[]) => {
+  if (watching) return
+  watching = true
+  try {
+    const due = dueWatchers(watchers, await getWatcherRuns())
+    if (!due.length) return
+    const [tasks, myPrs, alerts, cards] = await Promise.all([allTasks(), allMyPrs(), watchAlerts(), watcherCards()])
+    const facts = { tasks, myPrs, alerts }
+    let made = 0
+    for (const w of due) {
+      const template = templates.find((t) => t.id === w.templateId)
+      const fresh = matchesOf(w, facts).filter((m) => {
+        const key = watcherKey(w, m)
+        const prefix = `${w.id}|${m.ref}|`
+        return !cards.some((c) => c.key === key || (c.live && c.key.startsWith(prefix)))
+      })
+      if (fresh.length) {
+        await addStreamItems(
+          fresh.map((m) => ({
+            title: template ? `${m.title} (#${m.number})` : DEFAULT_TASK[w.check](m.number),
+            repo: m.repo,
+            refKind: 'pr' as const,
+            ref: m.ref,
+            createdBy: `watcher:${w.id}`,
+            dedupeKey: watcherKey(w, m),
+            gate: template ? 'step-now' : undefined, // the event it waited for already happened
+          })),
+          'queued',
+          `by watcher “${w.name}”`,
+          template,
+        )
+        for (const m of fresh) cards.push({ key: watcherKey(w, m), live: true })
+        made += fresh.length
+      }
+      await setWatcherRun(w.id, new Date().toISOString())
+    }
+    if (made) {
+      logInfo('stream', `watchers made ${made} card${made === 1 ? '' : 's'}`)
+      notifyStream()
+    }
+  } catch (e) {
+    logError('stream', e, 'run watchers')
+  } finally {
+    watching = false
   }
 }
 
