@@ -443,27 +443,45 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
           {/* the composer: my reply goes into the item's session and the agent picks it up */}
           <div className="shrink-0 border-t border-deck-800 p-3">
             {canReply && (
-              <div className="mb-2 flex items-end gap-2">
+              // one box, like a chat input: the text grows with its lines, send sits inside it
+              <div className="mb-2 flex items-end gap-2 rounded-xl border border-deck-700 bg-deck-800/80 py-1.5 pr-1.5 pl-3.5 transition-colors focus-within:border-grass-500/70">
                 <textarea
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.metaKey) {
+                    // Enter sends, Shift+Enter breaks the line; never mid-composition (IME, dead keys)
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault()
                       send()
                     }
                   }}
-                  rows={2}
-                  placeholder="Reply to the agent — a note on the result, an answer, “push it and open a PR”…"
-                  className="min-w-0 flex-1 resize-none rounded-md border border-deck-700 bg-deck-800/80 px-3 py-2 text-sm text-deck-100 placeholder:text-deck-500 focus:border-deck-500 focus:outline-none"
+                  rows={Math.min(Math.max(reply.split('\n').length, 1), 6)}
+                  aria-label="Reply to the agent"
+                  placeholder="Reply to the agent…"
+                  className="min-w-0 flex-1 resize-none self-center bg-transparent py-1 text-sm leading-relaxed text-deck-100 placeholder:text-deck-500 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={send}
                   disabled={!reply.trim()}
-                  className="h-9 shrink-0 cursor-pointer rounded-md bg-grass-600 px-3 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
+                  title="Send (↵) · new line (⇧↵)"
+                  aria-label="Send"
+                  className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-grass-600 text-white hover:bg-grass-500 disabled:cursor-default disabled:bg-deck-700 disabled:text-deck-500"
                 >
-                  Send
+                  <svg
+                    width={16}
+                    height={16}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.25}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
                 </button>
               </div>
             )}
