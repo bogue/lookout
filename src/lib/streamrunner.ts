@@ -7,6 +7,7 @@ import {
   addStreamSession,
   advanceStreamStep,
   allMyPrs,
+  allowRiskyStreamItem,
   allTasks,
   armStreamWatch,
   claimStreamRun,
@@ -23,6 +24,7 @@ import {
   streamEvents,
   streamItem,
   streamItems,
+  streamRiskVerdict,
   streamRunEnded,
   streamRunResult,
   streamShapeResult,
@@ -37,6 +39,7 @@ import { prRefOf } from './stream'
 import { advance, fillStep } from './streamflow'
 import { suggestNextStep } from './streamnext'
 import { localPriority, needsRating, ratePriorities } from './streampriority'
+import { assessRisk, needsRiskCheck } from './streamrisk'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, unanswered, worktreeDir } from './streamrun'
 import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { alertAt, checkTrigger, TRIGGERS, type Trigger, type WaitFor, waitFor, waitingLabel } from './streamwatch'
@@ -421,6 +424,11 @@ export const approveStreamItem = async (snapshot: StreamItem, actor: 'me' | 'loo
   // the card as it is now: a double click, or a run Auto-run started meanwhile, must not advance it
   const item = await streamItem(snapshot.id)
   if (!item || item.stepIndex !== snapshot.stepIndex || !WAITS_ON_ME.includes(item.status)) return
+  // a risky card waiting for my OK: approving lets it start, it has no result to move past
+  if (item.gate === 'risk') {
+    await allowRiskyStreamItem(item.id)
+    return notifyStream()
+  }
   const next = advance(item.steps, item.stepIndex)
   if (next.kind === 'done') {
     await setStreamStatus(item, 'done')
@@ -564,7 +572,17 @@ export const tickStream = async (repos: WatchedRepo[]) => {
   if (ticking) return
   ticking = true
   try {
-    for (const item of pickNext(await streamItems(), CAPS)) await runStreamItem(item, repos, 'lookout')
+    for (const item of pickNext(await streamItems(), CAPS)) {
+      // a card's first start without me passes the risk check; a risky one waits for my OK instead
+      if (needsRiskCheck(item)) {
+        const risk = await assessRisk(item)
+        if (!(await streamRiskVerdict(item.id, risk.risky, risk.reason)) || risk.risky) {
+          notifyStream()
+          continue
+        }
+      }
+      await runStreamItem(item, repos, 'lookout')
+    }
   } catch (e) {
     logError('stream', e, 'scheduler tick')
   } finally {

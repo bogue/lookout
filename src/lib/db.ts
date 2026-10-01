@@ -836,6 +836,31 @@ export const setStreamOrders = async (orderedIds: string[]) => {
   await d.execute(`UPDATE stream_items SET sort_order = CASE id ${cases} END WHERE id IN (${ids})`, orderedIds)
 }
 
+// Risk check (streamrisk.ts) on a card Auto-run was about to start: risky waits for my OK in Needs
+// you (gate risk); safe only leaves its verdict in the trail. Only a card still queued moves.
+export const streamRiskVerdict = async (id: string, risky: boolean, reason: string) => {
+  const d = await getDb()
+  if (risky) {
+    const res = await d.execute(
+      "UPDATE stream_items SET status = 'needs_review', gate = 'risk', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'queued'",
+      [now(), id],
+    )
+    if (!res.rowsAffected) return false
+  }
+  await logStreamEvent(d, id, 'risk', `${risky ? 'risky' : 'safe'}: ${reason}`, 'lookout')
+  return true
+}
+
+// my OK on a risky card: back to Queued, cleared to start on its own (gate risk-ok, spent once it runs)
+export const allowRiskyStreamItem = async (id: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'queued', gate = 'risk-ok', sort_order = NULL, updated_at = $1 WHERE id = $2 AND gate = 'risk' AND status = 'needs_review'",
+    [now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, 'status', 'let it run')
+}
+
 // Needs you criticality (streampriority.ts). Haiku's lands only on a card still waiting there with no
 // priority yet — never over mine, never on one that moved on meanwhile. Mine always lands, and stays.
 export const setStreamPriority = async (

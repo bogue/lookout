@@ -155,7 +155,15 @@ const Card = ({ item, onOpen, onAction, onDragStart, onDragEnd, busy, onPriority
             step {item.stepIndex + 1}/{item.steps.length}
           </span>
         )}
-        {!QUIET.includes(item.status) && !projectGateTarget(item.gate) && (
+        {item.gate === 'risk' && item.status === 'needs_review' ? (
+          <span
+            className="rounded bg-amber-500/20 px-1 py-0.5 text-amber-300"
+            title="The risk check held it: open it to let it run"
+          >
+            ⚠ needs your OK
+          </span>
+        ) : null}
+        {!QUIET.includes(item.status) && !projectGateTarget(item.gate) && item.gate !== 'risk' && (
           <span className={`rounded px-1 py-0.5 ${TAG_CLASS[item.status] ?? 'bg-deck-700'}`}>
             {item.status === 'watching' && item.waitFor ? `👁 ${waitingLabel(item.waitFor)}` : STATUS_LABEL[item.status]}
           </span>

@@ -121,6 +121,12 @@ export const StreamPanel = ({ item, version, repos, onAction, onRun, busy, onPro
   const canReply = !!session && !!item.checkout && item.status !== 'running'
   const lastResultAt = events.map((e) => e.kind).lastIndexOf('result')
   const next = nextStepOf(events) // Haiku's suggested next step for the latest result
+  // why the risk check held it: its last verdict in the trail
+  const riskReason =
+    events
+      .filter((e) => e.kind === 'risk')
+      .at(-1)
+      ?.text?.replace(/^risky: /, '') ?? ''
   // a shaping card (read-only agent on an idea): its proposal of cards, while still on the table
   const shaping = item.branch === SHAPE_BRANCH
   const proposal = shaping ? proposalOf(events) : null
@@ -266,6 +272,25 @@ export const StreamPanel = ({ item, version, repos, onAction, onRun, busy, onPro
           </div>
 
           <div ref={threadRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {item.gate === 'risk' && item.status === 'needs_review' && (
+              // the risk check held it before it started: why, and my OK
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                <p className="text-amber-200">
+                  ⚠ Auto-run held this one before starting it. <span className="text-amber-300/80">{riskReason}</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onAction(item, 'approve')}
+                    disabled={busy}
+                    className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-50"
+                  >
+                    Let it run
+                  </button>
+                  <span className="text-xs text-deck-500">or edit the title first, or skip it from ⋯</span>
+                </div>
+              </div>
+            )}
             {item.status === 'watching' && item.waitFor && (
               <div className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-200">
                 <span aria-hidden="true">👁</span>
