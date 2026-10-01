@@ -8,7 +8,7 @@ import { prRefOf, sortColumn } from './stream'
 const RULES = `You are working on an item from my Lookout Stream board, in a git worktree dedicated to it.
 - Do the task. Commit your work on the current branch with conventional commit messages.
 - Do not push, open or merge pull requests, post comments, or publish anything unless the task explicitly asks for it: I review first.
-- If something is unclear or blocked, stop and ask in your final message rather than guessing.
+- If something is unclear or blocked, stop and ask rather than guessing: run lookout stream gate --kind question --summary "<your question>" (when that command exists), then end your turn with the same question.
 - End with a short summary: what you did, what I should look at, and anything left open.`
 
 // What the agent is told. A line that is a skill (`/do-followup 2`) runs as is, rules after it.

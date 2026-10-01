@@ -76,7 +76,7 @@ import {
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { digestOf, waitingCount } from './lib/streamdigest'
-import { onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
+import { notifyStream, onStreamChange, recoverStreamRuns, tickStream } from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { TAB_ORDER, tabForKey, type View } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
@@ -307,6 +307,7 @@ const App = () => {
     const sub = listen('cards:changed', () => {
       reload()
       reloadAlerts()
+      notifyStream() // a `lookout stream …` write: the board, its badge and Auto-run catch up
     }).catch(() => null)
     return () => {
       sub.then((un) => un?.())

@@ -33,6 +33,10 @@ describe('streamPrompt', () => {
     expect(p).toMatch(/do not push/i)
   })
 
+  it('tells the agent how to stop and ask me through the CLI', () => {
+    expect(streamPrompt(item())).toContain('lookout stream gate --kind question')
+  })
+
   it('adds my notes and the reference when there are some', () => {
     const p = streamPrompt(item({ body: 'keep the old API', refKind: 'url', ref: 'https://notion.so/Card-1' }))
     expect(p).toContain('keep the old API')

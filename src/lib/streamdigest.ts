@@ -10,7 +10,11 @@ export const waitingCount = (items: StreamItem[]) => items.filter((x) => columnO
 export type DigestMarks = { seenAt: string | null; notifiedAt: string | null }
 
 export const digestOf = (items: StreamItem[], marks: DigestMarks): { title: string; body: string } | null => {
-  const since = [marks.seenAt, marks.notifiedAt].filter((t): t is string => !!t).sort().at(-1) ?? ''
+  const since =
+    [marks.seenAt, marks.notifiedAt]
+      .filter((t): t is string => !!t)
+      .sort()
+      .at(-1) ?? ''
   const fresh = items.filter((x) => columnOf(x.status) === 'needs_you' && x.updatedAt > since)
   if (!fresh.length) return null
   const n = fresh.length

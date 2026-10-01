@@ -10,6 +10,7 @@ import { type Db, NoDatabaseError, openDb } from './db'
 import { notifyApp } from './notify'
 import { resolveDbPath } from './paths'
 import { AmbiguousError, NoMatchError, resolveCard, resolveMyPr, type Selector } from './resolve'
+import { streamCommand } from './stream'
 
 // Exit codes are the CLI's contract with skills: 2 and 3 mean "nothing to do here", not failure.
 export const EXIT = { ok: 0, error: 1, noMatch: 2, noDb: 3, ambiguous: 4 } as const
@@ -85,6 +86,15 @@ your own PRs — the merge pipeline
   lookout mine column <${COLUMN_NAMES.join(' | ')}> [selector] [--force]
   lookout mine waiting | in-review | ready | done [selector]
 
+the Stream board — work dumped for Lookout's agents
+
+  lookout stream list [--status <s>] [--repo <r>]
+  lookout stream add <text…> | --stdin [--repo <owner/repo>] [--queue]
+  lookout stream gate [--item <id>] [--kind result | question] --summary <text> | --file <path> | --stdin
+  lookout stream note [--item <id>] <text…>
+
+           --item defaults to the item whose worktree you are in
+
   lookout doctor
 
 selector   --id <id> | --pr <n> | --branch <b> [--repo <owner/repo>]
@@ -97,7 +107,7 @@ options    --json   machine-readable output
 \`lookout card …\` is the old name for \`lookout review …\` and still works.
 `
 
-type Ctx = {
+export type Ctx = {
   args: Args
   json: boolean
   quiet: boolean
@@ -454,10 +464,11 @@ export const run = (
   try {
     if (command === 'doctor') return doctor(ctx)
     const isReview = REVIEW_ALIASES.includes(command)
-    if (!isReview && command !== 'mine') throw new Error(`unknown command "${command}"`)
+    if (!isReview && command !== 'mine' && command !== 'stream') throw new Error(`unknown command "${command}"`)
     const readOnly = ['list', 'show', undefined].includes(args.path[1]) || ctx.dryRun
     const db = openDb(resolveDbPath(), readOnly)
     try {
+      if (command === 'stream') return streamCommand(db, ctx)
       return isReview ? reviewCommand(db, ctx) : mineCommand(db, ctx)
     } finally {
       db.close()
