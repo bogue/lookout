@@ -3,11 +3,13 @@ import { Command } from '@tauri-apps/plugin-shell'
 import type { StreamItem, WatchedRepo } from '../types'
 import { ACTION_TOOLS } from './claude'
 import {
+  addStreamItems,
   addStreamSession,
   allAlerts,
   allMyPrs,
   allTasks,
   claimStreamRun,
+  finishShaping,
   fireStreamWatch,
   logStreamReply,
   saveStreamNext,
@@ -16,6 +18,7 @@ import {
   streamItems,
   streamRunEnded,
   streamRunResult,
+  streamShapeResult,
   watchStreamItem,
 } from './db'
 import { allowPath } from './fsscope'
@@ -24,6 +27,7 @@ import { cancelRun, getRun, getRuns, resumeRun, startRun } from './runs'
 import { prRefOf } from './stream'
 import { suggestNextStep } from './streamnext'
 import { pickNext, STREAM_DENY, STREAM_TOOLS, streamBranch, streamPrompt, worktreeDir } from './streamrun'
+import { type Proposal, parseProposal, SHAPE_DENY, SHAPE_TOOLS, shapePrompt } from './streamshape'
 import { TRIGGERS, type Trigger, triggerFired, type WaitFor, waitFor, waitingLabel } from './streamwatch'
 import { parseWorktrees } from './worktrees'
 
@@ -46,6 +50,9 @@ export const streamTaskId = (id: string) => `stream:${id}`
 export const streamRun = (item: StreamItem) => getRun(streamTaskId(item.id))
 
 const CAPS = { global: 2, perProject: 2 }
+
+// the checkout marker of a shaping card: it runs read-only in my clone, never in a worktree
+export const SHAPE_BRANCH = 'read-only'
 
 const git = async (args: string[], cwd: string) => {
   const out = await Command.create('git', args, { cwd }).execute()
@@ -140,7 +147,8 @@ const serial = (id: string, fn: () => Promise<unknown>) => {
   return next.then(notifyStream)
 }
 
-const callbacks = (id: string) => {
+// mode: a work turn (result → review, Haiku's next step) or a shaping turn (questions or a proposal)
+const callbacks = (id: string, mode: 'work' | 'shape' = 'work') => {
   const n = (dispatches.get(id) ?? 0) + 1
   dispatches.set(id, n)
   const current = () => dispatches.get(id) === n
@@ -152,6 +160,11 @@ const callbacks = (id: string) => {
       if (!current()) return
       if (isError) {
         serial(id, () => streamRunEnded(id, 'failed', text || 'claude reported an error'))
+        return
+      }
+      if (mode === 'shape') {
+        const proposal = parseProposal(text)
+        serial(id, () => streamShapeResult(id, text, proposal ? JSON.stringify(proposal) : null))
         return
       }
       serial(id, () => streamRunResult(id, text || '(the agent finished without a summary)'))
@@ -243,14 +256,73 @@ export const replyStreamItem = async (item: StreamItem, text: string) => {
   if (starting.has(item.id) || getRun(taskId)?.status === 'running') return
   starting.add(item.id)
   try {
+    // a shaping conversation stays read-only, whoever speaks — keyed on its checkout marker (set by
+    // shapeStreamItem, replaced only when real work prepares a worktree), so a failed turn can't
+    // turn a reply into an editing run in my clone
+    const shaping = item.branch === SHAPE_BRANCH
     if (!(await claimStreamRun(item.id, 'resumed with my reply', 'me'))) return
     await logStreamReply(item.id, text)
     notifyStream()
     // always a fresh Run: the previous process may still be exiting, and must not touch this one
-    await resumeRun(taskId, 'Stream', 'stream', item.checkout, text, session, callbacks(item.id), ACTION_TOOLS)
+    if (shaping)
+      await resumeRun(
+        taskId,
+        'Shape',
+        'stream',
+        item.checkout,
+        text,
+        session,
+        callbacks(item.id, 'shape'),
+        SHAPE_TOOLS,
+        SHAPE_DENY,
+      )
+    else await resumeRun(taskId, 'Stream', 'stream', item.checkout, text, session, callbacks(item.id), ACTION_TOOLS)
   } finally {
     starting.delete(item.id)
   }
+}
+
+// Shape an Inbox idea: a read-only agent in the project's clone (it changes nothing, so no worktree)
+// asks what it needs and proposes the cards. Its conversation is the item's thread.
+export const shapeStreamItem = async (item: StreamItem, repos: WatchedRepo[]) => {
+  const taskId = streamTaskId(item.id)
+  const repoPath = repos.find((r) => r.repo === item.repo)?.path
+  if (!repoPath || starting.has(item.id) || getRun(taskId)?.status === 'running') return
+  starting.add(item.id)
+  try {
+    if (!(await claimStreamRun(item.id, 'shaping with a read-only agent', 'me'))) return
+    await setStreamCheckout(item.id, SHAPE_BRANCH, repoPath)
+    notifyStream()
+    await startRun(
+      taskId,
+      'Shape',
+      'stream',
+      shapePrompt(item),
+      repoPath,
+      callbacks(item.id, 'shape'),
+      SHAPE_TOOLS,
+      SHAPE_DENY,
+    )
+  } finally {
+    starting.delete(item.id)
+  }
+}
+
+// Take a proposal: its cards join the board in the same project and reference, the idea is done
+export const acceptProposal = async (item: StreamItem, proposal: Proposal, queue: boolean) => {
+  await addStreamItems(
+    proposal.cards.map((c) => ({
+      title: c.title,
+      body: c.notes,
+      repo: item.repo,
+      refKind: item.refKind,
+      ref: item.ref,
+    })),
+    queue ? 'queued' : 'idea',
+    `shaped from “${item.title}”`,
+  )
+  await finishShaping(item.id, proposal.cards.length)
+  notifyStream()
 }
 
 // Put a card on watch: it waits on its PR instead of on me (Needs you → Active).

@@ -6,7 +6,15 @@ import { logError } from '../lib/log'
 import { getRuns, subscribeRuns } from '../lib/runs'
 import { projectGateTarget, prRefOf, STATUS_LABEL, type StreamActionId, streamActions } from '../lib/stream'
 import { nextStepOf } from '../lib/streamnext'
-import { cancelStreamItem, replyStreamItem, streamTaskId, watchStream } from '../lib/streamrunner'
+import {
+  acceptProposal,
+  cancelStreamItem,
+  replyStreamItem,
+  SHAPE_BRANCH,
+  streamTaskId,
+  watchStream,
+} from '../lib/streamrunner'
+import { proposalOf } from '../lib/streamshape'
 import { TRIGGERS, waitingLabel } from '../lib/streamwatch'
 import { messageTime } from '../lib/time'
 import type { StreamEvent, StreamItem } from '../types'
@@ -109,6 +117,9 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
   const canReply = !!session && !!item.checkout && item.status !== 'running'
   const lastResultAt = events.map((e) => e.kind).lastIndexOf('result')
   const next = nextStepOf(events) // Haiku's suggested next step for the latest result
+  // a shaping card (read-only agent on an idea): its proposal of cards, while still on the table
+  const shaping = item.branch === SHAPE_BRANCH
+  const proposal = shaping ? proposalOf(events) : null
 
   // header ⋯ holds the rare ones (skip, remove); the footer keeps the moves that drive the item
   // forward. Ordering (top/bottom/reset) belongs on the board, not in the thread.
@@ -307,7 +318,8 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
             {/* the thread: everything that happened to the item, one conversation */}
             <ol className="flex flex-col gap-2.5">
               {events.map((e, i) => {
-                if (e.kind === 'next') return null // shown as buttons on its result, not as a line
+                // shown as buttons (next step) or as the cards card (proposal), not as a raw line
+                if (e.kind === 'next' || e.kind === 'proposal') return null
                 const lastResult = e.kind === 'result' && i === lastResultAt
                 if (e.kind === 'result')
                   return (
@@ -319,7 +331,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                         🤖 Result <span className="ml-auto">{messageTime(e.ts)}</span>
                       </p>
                       <Markdown text={e.text ?? ''} className="text-sm" />
-                      {lastResult && item.status === 'needs_review' && next && (
+                      {lastResult && item.status === 'needs_review' && !shaping && next && (
                         // Haiku's read of what comes next: each button sends its reply (shown) or finishes
                         <div className="mt-3 flex flex-col gap-2 border-t border-deck-700 pt-2.5">
                           {next.headline && <p className="text-xs text-deck-300">🤖 {next.headline}</p>}
@@ -371,7 +383,7 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                           </p>
                         </div>
                       )}
-                      {lastResult && item.status === 'needs_review' && !next && (
+                      {lastResult && item.status === 'needs_review' && !shaping && !next && (
                         <div className="mt-3 flex items-center gap-2 border-t border-deck-700 pt-2.5">
                           <button
                             type="button"
@@ -427,6 +439,43 @@ export const StreamPanel = ({ item, version, repos, onAction, onProject, onEdite
                   </li>
                 )
               })}
+              {proposal && item.status === 'needs_review' && (
+                // the shaping agent's plan: create its cards, or reply below to change it
+                <li className="flex flex-col gap-2.5 rounded-lg border border-grass-500/40 bg-grass-600/10 p-3">
+                  <p className="text-xs text-deck-300">
+                    🧭 {proposal.summary || 'Proposed cards'} · {proposal.cards.length} card
+                    {proposal.cards.length === 1 ? '' : 's'}
+                  </p>
+                  <ol className="flex flex-col gap-1.5">
+                    {proposal.cards.map((c, k) => (
+                      <li key={c.title} className="rounded-md bg-deck-800/80 px-3 py-2">
+                        <p className="text-sm font-medium text-deck-100">
+                          <span className="mr-2 text-xs text-deck-500">{k + 1}</span>
+                          {c.title}
+                        </p>
+                        {c.notes && <p className="mt-0.5 text-xs text-deck-400">{c.notes}</p>}
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => acceptProposal(item, proposal, true)}
+                      className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-grass-500"
+                    >
+                      Create {proposal.cards.length} card{proposal.cards.length === 1 ? '' : 's'} in Queued
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => acceptProposal(item, proposal, false)}
+                      className="cursor-pointer rounded-md bg-deck-700 px-3 py-1.5 text-sm text-deck-100 hover:bg-deck-600"
+                    >
+                      In Inbox
+                    </button>
+                    <span className="text-xs text-deck-500">or reply below to change the plan</span>
+                  </div>
+                </li>
+              )}
               {run && item.status === 'running' && (
                 <li className="flex flex-col gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                   <p className="flex items-center gap-2 text-xs text-amber-300">

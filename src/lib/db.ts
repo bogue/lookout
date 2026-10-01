@@ -504,18 +504,23 @@ export const streamEvents = async (itemId: string): Promise<StreamEvent[]> => {
 // A dump's items, in dump order: created_at is spaced by a millisecond so "oldest first" in Queued
 // keeps the order I typed them in even though they land in the same instant.
 // An item with no project yet is stored with repo '' until Haiku (or I) name one.
-export const addStreamItems = async (items: DumpItem[], status: StreamStatus) => {
+// `origin` says where the items came from in their trail (a shaped idea), else the dump
+export const addStreamItems = async (
+  items: (DumpItem & { body?: string | null })[],
+  status: StreamStatus,
+  origin?: string,
+) => {
   const d = await getDb()
   const base = Date.now()
   for (const [i, it] of items.entries()) {
     const id = crypto.randomUUID()
     const at = new Date(base + i).toISOString()
     await d.execute(
-      `INSERT INTO stream_items (id, repo, title, ref_kind, ref, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-      [id, it.repo ?? '', it.title, it.refKind, it.ref, status, at],
+      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+      [id, it.repo ?? '', it.title, it.body ?? null, it.refKind, it.ref, status, at],
     )
-    await logStreamEvent(d, id, 'created', status === 'queued' ? 'dumped straight into Queued' : null)
+    await logStreamEvent(d, id, 'created', origin ?? (status === 'queued' ? 'dumped straight into Queued' : null))
   }
 }
 
@@ -604,6 +609,26 @@ export const streamRunResult = async (id: string, text: string) => {
     [now(), id],
   )
   if (res.rowsAffected) await logStreamEvent(d, id, 'result', text, 'lookout')
+}
+
+// A shaping turn answered (streamshape.ts): a proposal waits for my go (Needs you, review), questions
+// wait for my answers. Gate `shape` keeps the replies in the read-only shaping session.
+export const streamShapeResult = async (id: string, text: string, proposal: string | null) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = $1, gate = 'shape', sort_order = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+    [proposal ? 'needs_review' : 'question', now(), id],
+  )
+  if (!res.rowsAffected) return
+  await logStreamEvent(d, id, 'result', text, 'lookout')
+  if (proposal) await logStreamEvent(d, id, 'proposal', proposal, 'lookout')
+}
+
+// I took the proposal: the idea became its cards, and is done
+export const finishShaping = async (id: string, created: number) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET status = 'done', gate = NULL, updated_at = $1 WHERE id = $2", [now(), id])
+  await logStreamEvent(d, id, 'shaped', `became ${created} card${created === 1 ? '' : 's'}`, 'me')
 }
 
 // The process ended without an answer. Only an item still running moves: a result already sent it on.

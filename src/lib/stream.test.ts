@@ -240,8 +240,8 @@ describe('dropStatus', () => {
 describe('streamActions', () => {
   const actionIds = (over: Partial<StreamItem>) => streamActions(item(over)).map((a) => a.id)
 
-  it('offers queue, skip and remove on an idea', () => {
-    expect(actionIds({ status: 'idea' })).toEqual(['queue', 'skip', 'top', 'bottom', 'remove'])
+  it('offers shape, queue, skip and remove on an idea', () => {
+    expect(actionIds({ status: 'idea' })).toEqual(['shape', 'queue', 'skip', 'top', 'bottom', 'remove'])
   })
 
   it('offers run now, pause and back-to-inbox on a queued card', () => {

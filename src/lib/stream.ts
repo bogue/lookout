@@ -105,6 +105,7 @@ export type StreamActionId =
   | 'approve'
   | 'retry'
   | 'unwatch'
+  | 'shape'
   | 'pause'
   | 'resume'
   | 'to-inbox'
@@ -124,6 +125,11 @@ const A: Record<StreamActionId, StreamAction> = {
   approve: { id: 'approve', label: 'Approve', title: 'The result is good: mark it done' },
   retry: { id: 'retry', label: 'Retry', title: 'Run it again, in the same session when there is one' },
   unwatch: { id: 'unwatch', label: 'Stop watching', title: 'Stop waiting on GitHub: back to Needs you' },
+  shape: {
+    id: 'shape',
+    label: 'Shape with agent',
+    title: 'A read-only agent asks what it needs and proposes the cards to create',
+  },
   pause: { id: 'pause', label: 'Pause', title: 'Keep it queued, but never pick it' },
   resume: { id: 'resume', label: 'Resume', title: 'Pickable again' },
   'to-inbox': { id: 'to-inbox', label: 'Back to Inbox' },
@@ -141,7 +147,7 @@ const A: Record<StreamActionId, StreamAction> = {
 }
 
 const STATUS_ACTIONS: Record<StreamStatus, StreamActionId[]> = {
-  idea: ['queue', 'skip'],
+  idea: ['shape', 'queue', 'skip'],
   shaping: ['skip'],
   queued: ['run', 'pause', 'to-inbox', 'done', 'skip'],
   paused: ['resume', 'to-inbox', 'skip'],

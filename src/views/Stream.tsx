@@ -33,7 +33,7 @@ import {
   tagSuggestions,
 } from '../lib/stream'
 import { guessProjects } from '../lib/streamproject'
-import { notifyStream, onStreamChange, runStreamItem } from '../lib/streamrunner'
+import { notifyStream, onStreamChange, runStreamItem, SHAPE_BRANCH, shapeStreamItem } from '../lib/streamrunner'
 import { waitingLabel } from '../lib/streamwatch'
 import { timeAgo } from '../lib/time'
 import type { StreamColumn, StreamItem, StreamStatus, WatchedRepo } from '../types'
@@ -491,6 +491,9 @@ export const Stream = ({ repos, autoRun, onAutoRun, openRequest }: Props) => {
   }, [items, names])
 
   const onAction = (item: StreamItem, action: StreamActionId) => {
+    // shaping: a read-only agent on the idea; a failed shaping turn retries as shaping, not as work
+    if (action === 'shape' || (action === 'retry' && item.branch === SHAPE_BRANCH))
+      return write(() => shapeStreamItem(item, repos), 'stream shape')
     if (action === 'run' || action === 'retry') return write(() => runStreamItem(item, repos, 'me'), `stream ${action}`)
     const status = applyStreamAction(item.status, action)
     if (status) return write(() => setStreamStatus(item, status, entryRank(items, status)), `stream ${action}`)
