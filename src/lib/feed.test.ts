@@ -36,7 +36,7 @@ describe('linkReports', () => {
       session('s2', '2026-01-01T11:00:00Z'),
       report('2026-01-01T12:00:00Z', { body: 'x', fromSession: 's1' }),
     ])
-    expect(r.replyTo).toEqual({ text: a.text, ts: a.ts, exact: true })
+    expect(r.replyTo).toEqual({ icon: '🤖', text: a.text, ts: a.ts, exact: true })
   })
 
   it('quotes the latest session before a report file, as a guess', () => {
@@ -46,7 +46,7 @@ describe('linkReports', () => {
       report('2026-01-01T12:00:00Z', { filePath: '/r.md', text: 'Review done' }),
       session('s3', '2026-01-01T13:00:00Z'),
     ])
-    expect(r.replyTo).toEqual({ text: b.text, ts: b.ts, exact: false })
+    expect(r.replyTo).toEqual({ icon: '🤖', text: b.text, ts: b.ts, exact: false })
   })
 
   it('quotes nothing when no session came before the report', () => {
@@ -80,7 +80,7 @@ describe('mergeReports', () => {
     const s = session('s1', '2026-01-01T10:00:00Z')
     const out = mergeReports([s, push('2026-01-01T12:00:00Z')], [report('2026-01-01T11:00:00Z', { filePath: '/r.md' })])
     expect(out.map((e) => e.ts)).toEqual(['2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z', '2026-01-01T12:00:00Z'])
-    expect(out[1].replyTo).toEqual({ text: s.text, ts: s.ts, exact: false })
+    expect(out[1].replyTo).toEqual({ icon: '🤖', text: s.text, ts: s.ts, exact: false })
   })
 
   it('replaces the reports already on the feed instead of doubling them', () => {
@@ -93,5 +93,31 @@ describe('mergeReports', () => {
   it('drops a report that is gone from the store', () => {
     const out = mergeReports([push('2026-01-01T10:00:00Z'), report('2026-01-01T11:00:00Z', { body: 'x' })], [])
     expect(out.map((e) => e.actor)).toEqual(['bob'])
+  })
+})
+
+describe('buildFeed', () => {
+  it('shows a chat session as the question it asked', async () => {
+    const { sessionsForBranch } = await import('./sessions')
+    const { fetchPrTimeline } = await import('./gh')
+    const { capturedReviewsForTask } = await import('./db')
+    vi.mocked(fetchPrTimeline).mockResolvedValue([])
+    vi.mocked(capturedReviewsForTask).mockResolvedValue([])
+    vi.mocked(sessionsForBranch).mockResolvedValue([
+      {
+        sessionId: 'c1',
+        command: null,
+        branch: 'b',
+        prNumber: 1,
+        ts: '2026-01-01T10:00:00Z',
+        cwd: '/r',
+        path: '/p',
+        question: 'still needed?',
+      },
+    ])
+    const { buildFeed } = await import('./feed')
+    const task = { id: 'a/b#1', repo: 'a/b', prNumber: 1, branch: 'b', repoPath: '/r', reviewFiles: [] }
+    const { feed } = await buildFeed(task as never, 'me')
+    expect(feed).toMatchObject([{ icon: '💬', text: 'chat: still needed?', sessionId: 'c1', mine: true }])
   })
 })

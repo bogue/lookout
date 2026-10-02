@@ -6,6 +6,7 @@ import { NotificationBell } from './components/NotificationBell'
 import { SessionPanel } from './components/SessionPanel'
 import { visibleButtons } from './lib/buttons'
 import { type CardActionId, cardActions } from './lib/cardactions'
+import { CHAT_COMMAND, chatPrompt } from './lib/chat'
 import { ACTION_TOOLS } from './lib/claude'
 import {
   DEFAULT_PR_BUTTONS,
@@ -54,13 +55,24 @@ import { fillPrompt } from './lib/prompt'
 import { setOpenLinksInBrowser } from './lib/prwindow'
 import { sortReposByNames } from './lib/repoorder'
 import { scanReviewFiles } from './lib/reviews'
-import { cancelRun, closeRun, getRun, getRuns, killRun, replyRun, resumeRun, startRun, subscribeRuns } from './lib/runs'
-import { sessionCwd } from './lib/sessions'
+import {
+  cancelRun,
+  closeRun,
+  failRun,
+  getRun,
+  getRuns,
+  killRun,
+  replyRun,
+  resumeRun,
+  startRun,
+  subscribeRuns,
+} from './lib/runs'
+import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
 import { runCaptureKind } from './lib/transcript'
 import { initTray, setTrayCount, showMainWindow } from './lib/tray'
-import { pathForBranch } from './lib/worktrees'
+import { chatCheckout, pathForBranch } from './lib/worktrees'
 import type {
   ActionButton,
   Alert,
@@ -361,6 +373,8 @@ const App = () => {
       }
     return {
       onSession: async (taskId: string, sessionId: string) => {
+        // a chat is not a review session: it must not move the card (it shows in the history anyway)
+        if (getRun(taskId)?.command === CHAT_COMMAND) return
         await addSessionId(taskId, sessionId)
         await reload()
       },
@@ -370,11 +384,12 @@ const App = () => {
         if (summary) await setFollowupSummary(taskId, summary)
         await linkReviewReport(taskId)
         // the review lands on the card now, not on the next sync, as the button's "save answer as"
-        // setting says; a reply (no button) leaves the kind to Haiku, which answers once per session
+        // setting says; a reply (no button) leaves the kind to Haiku, which answers once per session.
+        // A chat is a conversation, not a review: it shows as itself in the history
         const run = getRun(taskId)
         const task = (await allTasks()).find((x) => x.id === taskId)
         const kind = runCaptureKind(button)
-        if (run?.sessionId && task?.repoPath && kind !== 'off')
+        if (run?.sessionId && task?.repoPath && kind !== 'off' && run.command !== CHAT_COMMAND)
           await captureRun({
             taskId,
             branch: task.branch,
@@ -763,26 +778,29 @@ const App = () => {
           variant={panelIsPr ? 'pr' : 'review'}
           mergeMethod={config.mergeMethod}
           buttons={visibleButtons(panelIsPr ? config.prButtons : config.reviewButtons, panelTask)}
-          onReply={async (text) => {
+          onReply={async (text, to) => {
             const board: ButtonBoard = panelIsPr ? 'pr' : 'review'
-            const sessionId = panelTask.sessionIds.at(-1)
             const run = getRun(panelTask.id)
-            if (run && (run.sessionId ?? sessionId)) replyRun(panelTask.id, text, runCallbacks(board), sessionId)
-            // no live run (app restarted, run dismissed): resume the session directly, from the
-            // checkout it was started in — `claude --resume` only sees that directory's sessions
-            else if (panelTask.repoPath && sessionId) {
-              const cwd = await sessionCwd(panelTask.repoPath, sessionId)
-              resumeRun(panelTask.id, 'reply', board, cwd, text, sessionId, runCallbacks(board), ACTION_TOOLS)
+            // the live run's session: reply into it
+            if (to && run?.sessionId === to) replyRun(panelTask.id, text, runCallbacks(board), to)
+            // a past session (app restarted, or picked from the list): resume it from the checkout
+            // it was started in — `claude --resume` only sees that directory's sessions
+            else if (to && panelTask.repoPath) {
+              const cwd = await sessionCwd(panelTask.repoPath, to)
+              // a resumed chat stays a chat: its answer is not a report either
+              const command = (await isChatSession(panelTask.repoPath, to)) ? CHAT_COMMAND : 'reply'
+              resumeRun(panelTask.id, command, board, cwd, text, to, runCallbacks(board), ACTION_TOOLS)
             }
-            // no session yet: the message opens a fresh one on the PR's branch checkout
-            else if (panelTask.repoPath) {
+            // a new chat session, scoped to the PR, in a checkout of its head
+            else if (!to && panelTask.repoPath) {
               const t = panelTask
-              const prompt = `About PR #${t.prNumber} in ${t.repo} (branch ${t.branch}, checked out here):\n\n${text}`
+              const prompt = chatPrompt(t.prNumber, t.repo, t.branch, text)
               try {
-                const cwd = await pathForBranch(t.repoPath as string, t.branch)
-                await startRun(t.id, 'chat', board, prompt, cwd, runCallbacks(board), ACTION_TOOLS)
+                const cwd = await chatCheckout(t.repoPath as string, t.repo, t.branch, t.prNumber)
+                await startRun(t.id, CHAT_COMMAND, board, prompt, cwd, runCallbacks(board), ACTION_TOOLS)
               } catch (e) {
                 logError('run', e, `${t.id}: chat`)
+                failRun(t.id, CHAT_COMMAND, board, t.repoPath as string, text, e)
               }
             }
           }}

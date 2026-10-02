@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { type KeyboardEvent, type RefObject, useRef, useState } from 'react'
 
 type Props = {
   value: string
@@ -8,6 +8,11 @@ type Props = {
   placeholder?: string
   rows?: number
   className?: string
+  disabled?: boolean
+  placeholders?: boolean // suggest the prompt placeholders on `<` (button prompts only)
+  menuUp?: boolean // open the suggestions above, for a field at the bottom of the screen
+  inputRef?: RefObject<HTMLTextAreaElement | null>
+  onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void // keys the open menu didn't take
 }
 
 // prompt placeholders filled in at run time (see lib/prompt.ts)
@@ -23,10 +28,11 @@ type Menu = { kind: 'command' | 'placeholder'; start: number; query: string }
 const render = (kind: Menu['kind'], name: string) => (kind === 'command' ? `/${name}` : `<${name}>`)
 const insertText = (kind: Menu['kind'], name: string) => (kind === 'command' ? `/${name} ` : `<${name}>`)
 
-const detect = (el: HTMLTextAreaElement): Menu | null => {
+const detect = (el: HTMLTextAreaElement, placeholders: boolean): Menu | null => {
   const before = el.value.slice(0, el.selectionStart ?? 0)
   const cmd = before.match(COMMAND_RE)
   if (cmd) return { kind: 'command', start: before.length - cmd[2].length, query: cmd[2].slice(1) }
+  if (!placeholders) return null
   const ph = before.match(PLACEHOLDER_RE)
   if (ph) return { kind: 'placeholder', start: before.length - ph[1].length, query: ph[1].slice(1) }
   return null
@@ -34,8 +40,22 @@ const detect = (el: HTMLTextAreaElement): Menu | null => {
 
 // Textarea that suggests the user's Claude slash-commands while typing `/…` and the prompt
 // placeholders while typing `<…`. Arrow keys navigate, Enter/Tab inserts, Esc dismisses.
-export const CommandTextarea = ({ value, commands, onChange, onBlur, placeholder, rows = 3, className }: Props) => {
-  const ref = useRef<HTMLTextAreaElement>(null)
+export const CommandTextarea = ({
+  value,
+  commands,
+  onChange,
+  onBlur,
+  placeholder,
+  rows = 3,
+  className,
+  disabled,
+  placeholders = true,
+  menuUp,
+  inputRef,
+  onKeyDown,
+}: Props) => {
+  const own = useRef<HTMLTextAreaElement>(null)
+  const ref = inputRef ?? own
   const [menu, setMenu] = useState<Menu | null>(null)
   const [active, setActive] = useState(0)
 
@@ -49,7 +69,7 @@ export const CommandTextarea = ({ value, commands, onChange, onBlur, placeholder
   const open = suggestions.length > 0
 
   const refresh = (el: HTMLTextAreaElement) => {
-    setMenu(detect(el))
+    setMenu(detect(el, placeholders))
     setActive(0)
   }
 
@@ -82,7 +102,7 @@ export const CommandTextarea = ({ value, commands, onChange, onBlur, placeholder
           if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) refresh(e.currentTarget)
         }}
         onKeyDown={(e) => {
-          if (!open) return
+          if (!open) return onKeyDown?.(e)
           if (e.key === 'ArrowDown') {
             e.preventDefault()
             setActive((i) => (i + 1) % suggestions.length)
@@ -103,10 +123,13 @@ export const CommandTextarea = ({ value, commands, onChange, onBlur, placeholder
           onBlur?.()
         }}
         placeholder={placeholder}
+        disabled={disabled}
         className={className}
       />
       {open && menu && (
-        <ul className="absolute inset-x-0 top-full z-40 mt-1 max-h-56 overflow-y-auto rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
+        <ul
+          className={`absolute inset-x-0 z-40 max-h-56 ${menuUp ? 'bottom-full mb-1' : 'top-full mt-1'} overflow-y-auto rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl`}
+        >
           {suggestions.map((name, i) => (
             <li key={name}>
               <button

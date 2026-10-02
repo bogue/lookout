@@ -1,15 +1,17 @@
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { cardActions, snoozeAction } from '../lib/cardactions'
+import { listSlashCommands } from '../lib/commands'
 import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
 import { approvePr, fetchChecks, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
 import { MERGE_METHODS, type MergeOptions, pickMethod } from '../lib/merge'
 import type { CheckItem } from '../lib/prboard'
 import { openPrWindow } from '../lib/prwindow'
+import { sessionOptions } from '../lib/replytarget'
 import type { Run, RunLine } from '../lib/runs'
 import { sessionCwd } from '../lib/sessions'
 import { canApproveFrom, STAGES } from '../lib/stages'
@@ -20,9 +22,11 @@ import { BackButton } from './BackButton'
 import { CardActionIcon, CardMenuList } from './CardMenu'
 import { ChecksBox } from './ChecksBox'
 import { CloseButton } from './CloseButton'
+import { CommandTextarea } from './CommandTextarea'
 import { type Confirm, ConfirmDialog } from './ConfirmDialog'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
+import { SessionPicker } from './SessionPicker'
 import { SidePanel } from './SidePanel'
 
 type Props = {
@@ -35,7 +39,7 @@ type Props = {
   variant?: 'review' | 'pr'
   mergeMethod: MergePreference // the Merge button's preselected strategy (Settings)
   buttons: ActionButton[] // user-configured action buttons, already filtered by their visibility conditions
-  onReply: (text: string) => void
+  onReply: (text: string, sessionId: string | null) => void // null = start a new chat session
   onRunButton: (button: ActionButton) => void
   onStageChange: (stage: Stage) => void
   onSnooze: (snoozed: boolean) => void
@@ -55,10 +59,39 @@ type ReplyBoxProps = {
   canReply: boolean
   running: boolean
   placeholder: string
+  tools?: ReactNode // options for the message to send, on the box's bottom row
+  commands: string[] // skills + slash commands suggested on `/`
 }
 
-// Auto-growing reply field: Enter sends, Shift+Enter adds a line, cancel aborts a running turn
-const ReplyBox = ({ value, onChange, onSend, onCancel, canReply, running, placeholder }: ReplyBoxProps) => {
+const ArrowUpIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M12 19V5M5 12l7-7 7 7" />
+  </svg>
+)
+
+// Chat composer: the auto-growing field on top, a bottom row with the message's options on the left
+// and send on the right. Enter sends, Shift+Enter adds a line, stop aborts a running turn
+const ReplyBox = ({
+  value,
+  onChange,
+  onSend,
+  onCancel,
+  canReply,
+  running,
+  placeholder,
+  tools,
+  commands,
+}: ReplyBoxProps) => {
   const ref = useRef<HTMLTextAreaElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on every value change
   useEffect(() => {
@@ -68,12 +101,15 @@ const ReplyBox = ({ value, onChange, onSend, onCancel, canReply, running, placeh
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [value])
   return (
-    <div className="flex items-end gap-2">
-      <textarea
-        ref={ref}
+    <div className="flex flex-col rounded-2xl border border-deck-700 bg-deck-800 focus-within:border-deck-500">
+      <CommandTextarea
+        inputRef={ref}
         rows={1}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        commands={commands}
+        placeholders={false}
+        menuUp
+        onChange={onChange}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
@@ -81,28 +117,32 @@ const ReplyBox = ({ value, onChange, onSend, onCancel, canReply, running, placeh
           }
         }}
         disabled={!canReply}
-        placeholder={running ? 'claude is working… cancel to send something else' : placeholder}
-        className="max-h-40 flex-1 resize-none overflow-y-auto rounded border border-deck-600 bg-deck-800 px-2 py-1.5 text-sm outline-none focus:border-grass-500 disabled:opacity-50"
+        placeholder={running ? 'claude is working… stop to send something else' : placeholder}
+        className="max-h-40 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 pb-1 text-sm outline-none placeholder:text-deck-500 disabled:opacity-50"
       />
-      {running ? (
-        <button
-          type="button"
-          onClick={onCancel}
-          title="Cancel this turn — the session stays resumable, then send a new message"
-          className="cursor-pointer rounded-md border border-red-400/40 bg-red-500/20 px-3 py-1.5 text-sm text-red-200 hover:bg-red-500/40"
-        >
-          ■ cancel
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={onSend}
-          disabled={!canReply}
-          className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-50"
-        >
-          Send
-        </button>
-      )}
+      <div className="flex items-center gap-2 px-2 pb-2">
+        <div className="flex min-w-0 flex-1 items-center">{tools}</div>
+        {running ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            title="Stop this turn — the session stays resumable, then send a new message"
+            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-red-500/30 text-red-100 hover:bg-red-500/50"
+          >
+            <span className="h-2.5 w-2.5 rounded-[2px] bg-current" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={!canReply || !value.trim()}
+            title="Send (Enter)"
+            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-grass-600 text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
+          >
+            <ArrowUpIcon />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -328,6 +368,12 @@ export const SessionPanel = ({
   confirmOpenRef.current = !!confirm
   const methodMenuRef = useRef(false)
   methodMenuRef.current = methodMenu
+  // the session the input talks to: undefined follows the latest one, null is a new chat
+  const [pick, setPick] = useState<string | null | undefined>(undefined)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [commands, setCommands] = useState<string[]>([]) // this repo's skills + slash commands, for `/`
+  const pickerOpenRef = useRef(false)
+  pickerOpenRef.current = pickerOpen
   const mergeBoxRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef(task)
   taskRef.current = task
@@ -404,6 +450,19 @@ export const SessionPanel = ({
     return () => document.removeEventListener('mousedown', outside)
   }, [methodMenu])
 
+  useEffect(() => {
+    listSlashCommands(task.repoPath ? [task.repoPath] : [])
+      .then(setCommands)
+      .catch(() => setCommands([]))
+  }, [task.repoPath])
+
+  // another card talks to its own latest session
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset trigger only
+  useEffect(() => {
+    setPick(undefined)
+    setPickerOpen(false)
+  }, [task.id])
+
   // a fresh run (or another card) starts tailing again
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm triggers only
   useEffect(() => {
@@ -451,10 +510,11 @@ export const SessionPanel = ({
   // the event's own wording is the title — a follow-up must not open under a review's name
   const openCaptured = (content: string, title: string) => setReport({ title, content })
 
-  const send = () => {
+  const send = (to: string | null) => {
     if (!input.trim()) return
-    onReply(input.trim())
+    onReply(input.trim(), to)
     setInput('')
+    if (to === null) setPick(undefined) // the new chat becomes the latest session: follow it
   }
 
   // Esc first closes the report overlay if it's open; otherwise the shell closes the panel
@@ -462,6 +522,10 @@ export const SessionPanel = ({
     if (confirmOpenRef.current) return true // the dialog closes itself on Esc; keep the panel open
     if (methodMenuRef.current) {
       setMethodMenu(false)
+      return true
+    }
+    if (pickerOpenRef.current) {
+      setPickerOpen(false)
       return true
     }
     if (!reportRef.current) return false
@@ -475,10 +539,12 @@ export const SessionPanel = ({
   // none -> resume the last one), and with no session yet it starts a new one on the PR's branch.
   // Only a repo without a local clone can't chat: claude needs a checkout to run in.
   const canReply = !running && (!!run?.sessionId || !!task.repoPath)
+  const options = sessionOptions(feed, run)
+  const chatTo = pick === undefined ? (sessionId ?? null) : pick
   const chatPlaceholder = !task.repoPath
     ? `No local clone for ${task.repo} — add it in Settings to chat`
-    : sessionId
-      ? 'Message the latest claude session…'
+    : chatTo
+      ? 'Message this session…'
       : 'Ask claude about this PR (starts a new session)…'
 
   // Resuming only works from the directory the session ran in, which for a PR branch is usually a
@@ -947,7 +1013,7 @@ export const SessionPanel = ({
                               >
                                 {/* the bubble stays solid; only what it says is toned down */}
                                 <span className="[filter:grayscale(70%)]">
-                                  🤖 {e.replyTo.text} · {messageTime(e.replyTo.ts)}
+                                  {e.replyTo.icon} {e.replyTo.text} · {messageTime(e.replyTo.ts)}
                                 </span>
                               </div>
                               {/* opaque underlay: the front bubble's tint is translucent and would show the back one */}
@@ -970,11 +1036,23 @@ export const SessionPanel = ({
             <ReplyBox
               value={input}
               onChange={setInput}
-              onSend={send}
+              onSend={() => send(chatTo)}
               onCancel={onCancel}
               canReply={canReply}
               running={running}
               placeholder={chatPlaceholder}
+              commands={commands}
+              tools={
+                !!task.repoPath && (
+                  <SessionPicker
+                    options={options}
+                    selected={chatTo}
+                    onSelect={setPick}
+                    open={pickerOpen}
+                    onOpenChange={setPickerOpen}
+                  />
+                )
+              }
             />
           </div>
 
@@ -995,11 +1073,12 @@ export const SessionPanel = ({
                   <ReplyBox
                     value={input}
                     onChange={setInput}
-                    onSend={send}
+                    onSend={() => send(sessionId ?? null)}
                     onCancel={onCancel}
                     canReply={canReply}
                     running={running}
                     placeholder='send comments from here — e.g. "1,3" or "all"'
+                    commands={commands}
                   />
                 </div>
               )}

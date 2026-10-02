@@ -118,7 +118,7 @@ describe('session order', () => {
 describe('sessionsForBranch', () => {
   it('returns the worktree session with the checkout it ran in', async () => {
     const { sessionsForBranch } = await load()
-    expect(await sessionsForBranch(REPO, 'directory-list-call-perf')).toEqual([
+    expect(await sessionsForBranch(REPO, 'directory-list-call-perf', 1)).toEqual([
       {
         sessionId: 's2',
         command: 'handle-review',
@@ -157,6 +157,58 @@ describe('placing a session that named a PR instead of a branch', () => {
     ])
     const { scanRepoSessions } = await load()
     expect((await scanRepoSessions(REPO)).get('feature-x')).toEqual(['rev'])
+  })
+})
+
+describe('a chat started from a card', () => {
+  const chatLine = (prompt: string) =>
+    JSON.stringify({ timestamp: '2026-09-12T08:00:00Z', type: 'user', message: { role: 'user', content: prompt } })
+
+  // the clone sits on whatever branch it sits on: the chat names its own PR and branch
+  it('belongs to the PR and branch its opening line names, even in the clone', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [chatLine('About PR #12 in acme/app (branch feat-x):\n\nstill needed?')])
+    const { sessionsForBranch } = await load()
+    expect(await sessionsForBranch(REPO, 'feat-x', 12)).toMatchObject([
+      { sessionId: 'chat', command: null, prNumber: 12, question: 'still needed?', cwd: REPO },
+    ])
+  })
+
+  it('stays off another PR that has the same branch name', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [chatLine('About PR #12 in acme/app (branch main):\n\nhi')])
+    const { sessionsForBranch } = await load()
+    expect(await sessionsForBranch(REPO, 'main', 13)).toEqual([])
+  })
+
+  // asking a question is not reviewing: the ids that drive the stage leave chats out
+  it('never lands in the branch map that drives the stage', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [chatLine('About PR #12 in acme/app (branch feat-x):\n\nhi')])
+    const { scanRepoSessions } = await load()
+    expect((await scanRepoSessions(REPO)).get('feat-x')).toBeUndefined()
+  })
+
+  it('reads the opening from content blocks too', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [
+      JSON.stringify({
+        timestamp: '2026-09-12T08:00:00Z',
+        message: { content: [{ type: 'text', text: 'About PR #12 in acme/app (branch feat-x):\n\nhi' }] },
+      }),
+    ])
+    const { sessionsForBranch } = await load()
+    expect(await sessionsForBranch(REPO, 'feat-x', 12)).toMatchObject([{ sessionId: 'chat', question: 'hi' }])
+  })
+
+  it('is never captured as a review', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [chatLine('About PR #12 in acme/app (branch feat-x):\n\nreview it')])
+    const { scanRepoReviewSessions } = await load()
+    expect((await scanRepoReviewSessions(REPO)).map((s) => s.sessionId)).not.toContain('chat')
+  })
+
+  it('isChatSession tells a chat from a command session', async () => {
+    files.set(`${dirFor(REPO)}/chat.jsonl`, [chatLine('About PR #12 in acme/app (branch feat-x):\n\nhi')])
+    const { isChatSession } = await load()
+    expect(await isChatSession(REPO, 'chat')).toBe(true)
+    expect(await isChatSession(REPO, 's1')).toBe(false)
+    expect(await isChatSession(REPO, 'gone')).toBe(false)
   })
 })
 

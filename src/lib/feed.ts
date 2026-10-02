@@ -24,7 +24,7 @@ export type FeedEvent = {
   fromSession?: string // a captured report: the session it was read out of
   // the session a report answers, quoted over it like a chat reply. exact = the capture named it;
   // a report file names none, so it quotes the last session started before it (a guess)
-  replyTo?: { text: string; ts: string; exact: boolean }
+  replyTo?: { icon: string; text: string; ts: string; exact: boolean }
 }
 
 // Tie each report to the session that produced it. Runs on the sorted feed.
@@ -33,7 +33,7 @@ export const linkReports = (events: FeedEvent[]): FeedEvent[] => {
   return events.map((e) => {
     if (!(e.filePath || e.body)) return e
     const quote = (s: FeedEvent | undefined, exact: boolean) =>
-      s ? { ...e, replyTo: { text: s.text, ts: s.ts, exact } } : e
+      s ? { ...e, replyTo: { icon: s.icon, text: s.text, ts: s.ts, exact } } : e
     if (e.fromSession)
       return quote(
         sessions.find((s) => s.sessionId === e.fromSession),
@@ -181,7 +181,7 @@ export const buildFeed = async (
     })
 
   if (task.repoPath) {
-    const sessions = await sessionsForBranch(task.repoPath, task.branch).catch((e) => {
+    const sessions = await sessionsForBranch(task.repoPath, task.branch, task.prNumber).catch((e) => {
       logError('feed', e, `sessions for ${task.branch} in ${task.repoPath}`)
       return []
     })
@@ -189,9 +189,14 @@ export const buildFeed = async (
       if (s.ts)
         events.push({
           ts: s.ts,
-          icon: '🤖',
+          icon: s.question !== undefined ? '💬' : '🤖',
           actor: 'you',
-          text: s.command ? `started /${s.command} session` : 'started a claude session',
+          text:
+            s.question !== undefined
+              ? `chat: ${s.question}`
+              : s.command
+                ? `started /${s.command} session`
+                : 'started a claude session',
           mine: true,
           avatar: { login: me },
           sessionId: s.sessionId,

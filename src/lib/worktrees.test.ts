@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const execute = vi.fn()
 vi.mock('@tauri-apps/plugin-shell', () => ({
-  Command: { create: (_cmd: string, _args: string[], _opts?: unknown) => ({ execute }) },
+  Command: {
+    create: (_cmd: string, args: string[], opts?: { cwd?: string }) => ({ execute: () => execute(args, opts) }),
+  },
+}))
+
+vi.mock('@tauri-apps/api/path', () => ({
+  appDataDir: async () => '/data',
+  join: async (...parts: string[]) => parts.join('/'),
 }))
 
 const invoke = vi.fn()
@@ -139,5 +146,93 @@ describe('pathForBranch', () => {
   it('falls back to the clone when no worktree holds the branch', async () => {
     const { pathForBranch } = await load()
     expect(await pathForBranch('/Projects/repo', 'never-checked-out')).toBe('/Projects/repo')
+  })
+})
+
+describe('chatCheckout', () => {
+  const WT = '/data/worktrees/-Projects-repo-pr-7'
+  const REMOTES = 'fork\tgit@github.com:me/app.git (fetch)\nupstream\tgit@github.com:Acme/App.git (fetch)\n'
+  type Opts = { hasWorktree?: boolean; dirty?: boolean; fetchFails?: boolean; ahead?: boolean; remotes?: string }
+  // answers each git call by its subcommand; `worktree list` reflects whether the PR worktree exists
+  const git = (opts: Opts = {}) =>
+    execute.mockImplementation(async (args: string[]) => {
+      const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' })
+      const [sub] = args
+      if (sub === 'worktree' && args[1] === 'list')
+        return ok(`${PORCELAIN}${opts.hasWorktree ? `\nworktree ${WT}\nHEAD 111\ndetached\n` : ''}`)
+      if (sub === 'remote') return ok(opts.remotes ?? REMOTES)
+      if (sub === 'fetch') return opts.fetchFails ? { code: 1, stdout: '', stderr: 'no such ref' } : ok()
+      if (sub === 'rev-parse') return ok('abc123\n')
+      if (sub === 'status') return ok(opts.dirty ? ' M file.ts\n' : '')
+      if (sub === 'merge-base') return opts.ahead ? { code: 1, stdout: '', stderr: '' } : ok()
+      return ok()
+    })
+  const calls = () => execute.mock.calls.map(([args, o]) => [args.join(' '), o?.cwd])
+  const run = async (repo = 'acme/app') => (await load()).chatCheckout('/Projects/repo', repo, 'never-checked-out', 7)
+
+  it('uses the checkout that already holds the branch', async () => {
+    git()
+    const { chatCheckout } = await load()
+    expect(await chatCheckout('/Projects/repo', 'acme/app', 'directory-list-call-perf', 7)).toBe('/Projects/repo-perf')
+    expect(calls().some(([a]) => a.startsWith('fetch'))).toBe(false)
+  })
+
+  // the clone's own branch has nothing to do with the PR: never chat from it. The PR head comes
+  // from the remote that is the PR's repo (a fork clone's origin is not), into a ref of Lookout's own
+  it('adds a worktree on the PR head when no checkout holds the branch', async () => {
+    git()
+    expect(await run()).toBe(WT)
+    expect(calls()).toContainEqual(['fetch upstream +pull/7/head:refs/lookout/pr-7', '/Projects/repo'])
+    expect(calls()).toContainEqual(['rev-parse refs/lookout/pr-7', '/Projects/repo'])
+    expect(calls()).toContainEqual([`worktree add --detach ${WT} abc123`, '/Projects/repo'])
+  })
+
+  it('prunes worktrees whose dir is gone before looking for its own', async () => {
+    git()
+    await run()
+    const order = calls().map(([a]) => a)
+    expect(order.indexOf('worktree prune')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('worktree prune')).toBeLessThan(order.findIndex((a) => a.startsWith('worktree add')))
+  })
+
+  it('fails when no remote is the PR repo', async () => {
+    git({ remotes: 'origin\tgit@github.com:me/other.git (fetch)\n' })
+    await expect(run()).rejects.toThrow(/acme\/app/)
+  })
+
+  it('moves a clean PR worktree to the latest head', async () => {
+    git({ hasWorktree: true })
+    expect(await run()).toBe(WT)
+    expect(calls()).toContainEqual(['checkout --detach abc123', WT])
+    expect(calls().some(([a]) => a.startsWith('worktree add'))).toBe(false)
+  })
+
+  it('leaves a dirty PR worktree as it is', async () => {
+    git({ hasWorktree: true, dirty: true })
+    expect(await run()).toBe(WT)
+    expect(calls().some(([a]) => a.startsWith('checkout'))).toBe(false)
+  })
+
+  // claude may have committed there: moving HEAD would strand those commits
+  it('leaves a PR worktree holding commits not on the PR head', async () => {
+    git({ hasWorktree: true, ahead: true })
+    expect(await run()).toBe(WT)
+    expect(calls().some(([a]) => a.startsWith('checkout'))).toBe(false)
+  })
+
+  it('fails instead of falling back to the clone when the PR head cannot be fetched', async () => {
+    git({ fetchFails: true })
+    await expect(run()).rejects.toThrow(/pull\/7\/head/)
+  })
+
+  it('sets up one worktree at a time: a double send does not add it twice', async () => {
+    git()
+    const { chatCheckout } = await load()
+    const [a, b] = await Promise.all([
+      chatCheckout('/Projects/repo', 'acme/app', 'never-checked-out', 7),
+      chatCheckout('/Projects/repo', 'acme/app', 'never-checked-out', 7),
+    ])
+    expect([a, b]).toEqual([WT, WT])
+    expect(calls().filter(([x]) => x.startsWith('worktree add'))).toHaveLength(1)
   })
 })

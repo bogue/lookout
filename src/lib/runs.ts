@@ -147,6 +147,33 @@ export const resumeRun = async (
   await dispatch(run, text, callbacks, sessionId)
 }
 
+// A run that failed before claude could start (its checkout couldn't be set up): shown in the panel
+// like any failed run, with what was typed, instead of the message vanishing
+export const failRun = (
+  taskId: string,
+  command: Run['command'],
+  board: ButtonBoard,
+  repoPath: string,
+  text: string,
+  error: unknown,
+) => {
+  runs.set(taskId, {
+    taskId,
+    command,
+    board,
+    repoPath,
+    sessionId: null,
+    lines: [
+      { kind: 'user', text },
+      { kind: 'error', text: `could not start claude: ${errText(error)}` },
+    ],
+    status: 'error',
+    child: null,
+    allowedTools: REVIEW_TOOLS,
+  })
+  notify()
+}
+
 // Mark a finished run as closed (no further input expected)
 export const closeRun = (taskId: string) => {
   const run = runs.get(taskId)

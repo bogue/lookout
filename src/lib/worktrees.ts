@@ -1,3 +1,4 @@
+import { appDataDir, join } from '@tauri-apps/api/path'
 import { Command } from '@tauri-apps/plugin-shell'
 import { allowPath } from './fsscope'
 
@@ -50,3 +51,56 @@ export const listWorktrees = async (repoPath: string): Promise<Worktree[]> => {
 // checked out if no worktree holds it.
 export const pathForBranch = async (repoPath: string, branch: string): Promise<string> =>
   (await listWorktrees(repoPath)).find((w) => w.branch === branch)?.path ?? repoPath
+
+const git = async (args: string[], cwd: string) => {
+  const out = await Command.create('git', args, { cwd }).execute()
+  if (out.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${out.stderr.trim()}`)
+  return out.stdout.trim()
+}
+
+// The remote that is `owner/repo` on GitHub. A fork clone's origin is the fork, and fetching its
+// pull/<n>/head would give the fork's own PR #n.
+const remoteFor = async (repoPath: string, repo: string) => {
+  const want = repo.toLowerCase()
+  for (const line of (await git(['remote', '-v'], repoPath)).split('\n')) {
+    const [name, url = ''] = line.split(/\s+/)
+    const slug = url.match(/github\.com[:/](.+?)(?:\.git)?$/)?.[1]?.toLowerCase()
+    if (slug === want) return name
+  }
+  throw new Error(`no git remote of ${repoPath} points at ${repo}`)
+}
+
+const setUp = async (repoPath: string, repo: string, prNumber: number, dir: string) => {
+  const ref = `refs/lookout/pr-${prNumber}` // Lookout's own ref: FETCH_HEAD is anyone's to overwrite
+  await git(['fetch', await remoteFor(repoPath, repo), `+pull/${prNumber}/head:${ref}`], repoPath)
+  const head = await git(['rev-parse', ref], repoPath)
+  await git(['worktree', 'prune'], repoPath) // forget a worktree whose dir was deleted by hand
+  cache.delete(repoPath)
+  if (!(await listWorktrees(repoPath)).some((w) => w.path === dir))
+    await git(['worktree', 'add', '--detach', dir, head], repoPath)
+  // an earlier chat's edits or commits stay put; a clean one with nothing of its own follows the PR
+  else if (!(await git(['status', '--porcelain'], dir))) {
+    const behind = await Command.create('git', ['merge-base', '--is-ancestor', 'HEAD', head], { cwd: dir }).execute()
+    if (behind.code === 0) await git(['checkout', '--detach', head], dir)
+  }
+  cache.delete(repoPath)
+  await allowPath(dir)
+  return dir
+}
+
+// one setup per worktree at a time: a double send must not `worktree add` the same dir twice
+const settingUp = new Map<string, Promise<string>>()
+
+// Where a card's chat runs: a chat is about one PR, whatever the clone has checked out. The branch's
+// own checkout when there is one, else a worktree Lookout keeps for the PR, detached on its latest
+// head (pull/<n>/head also covers a PR from a fork). Never the clone on some unrelated branch.
+export const chatCheckout = async (repoPath: string, repo: string, branch: string, prNumber: number) => {
+  const held = (await listWorktrees(repoPath)).find((w) => w.branch === branch)
+  if (held) return held.path
+  const dir = await join(await appDataDir(), 'worktrees', `${repoPath.replace(/[^a-zA-Z0-9]/g, '-')}-pr-${prNumber}`)
+  const inflight = settingUp.get(dir)
+  if (inflight) return inflight
+  const setup = setUp(repoPath, repo, prNumber, dir).finally(() => settingUp.delete(dir))
+  settingUp.set(dir, setup)
+  return setup
+}
