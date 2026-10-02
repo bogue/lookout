@@ -80,6 +80,8 @@ export const getConfig = async (): Promise<Config> => {
     notifications: (await s.get<boolean>('notifications')) ?? true,
     mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
     // on by default: the board is for work agents pick up; a card still waits for me before anything leaves
+    // off by default: a beta under development, switched on in Settings
+    streamEnabled: (await s.get<boolean>('streamEnabled')) ?? false,
     streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? true,
     // the shipped flows until I save my own; a stored list is read as is (steps re-validated)
     streamTemplates: readTemplates(await s.get<unknown>('streamTemplates')),
@@ -133,6 +135,11 @@ export const setWatcherRun = async (id: string, run: WatcherRun) => {
 export const setStreamTemplates = async (templates: FlowTemplate[]) => {
   const s = await getStore()
   await s.set('streamTemplates', templates)
+}
+
+export const setStreamEnabled = async (streamEnabled: boolean) => {
+  const s = await getStore()
+  await s.set('streamEnabled', streamEnabled)
 }
 
 export const setStreamAutoRun = async (streamAutoRun: boolean) => {

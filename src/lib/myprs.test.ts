@@ -52,6 +52,7 @@ const config = (repos = [REPO, OTHER]): Config => ({
   openInBrowser: false,
   notifications: true,
   mergeMethod: 'merge',
+  streamEnabled: false,
   streamAutoRun: false,
   streamTemplates: [],
   streamWatchers: [],

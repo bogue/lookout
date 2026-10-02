@@ -166,6 +166,7 @@ export type Config = {
   openInBrowser: boolean // links open in the default browser instead of the in-app window (prwindow.ts)
   notifications: boolean // OS notifications for new alerts; the OS permission is asked when it's switched on
   mergeMethod: MergePreference // the Merge button's default strategy, when the repo allows it
+  streamEnabled: boolean // Stream beta (Settings): off = no tab, nothing scheduled, no chips on PR cards
   streamAutoRun: boolean // Stream: agents pick queued cards on their own (off = only Run now starts one)
   streamTemplates: FlowTemplate[] // Stream flow templates (Settings → Stream)
   streamWatchers: Watcher[] // Stream watchers: rules that create cards (Settings → Stream)

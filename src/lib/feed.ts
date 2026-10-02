@@ -153,12 +153,20 @@ export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEv
       fromSession: c.sessionId ?? undefined,
       filePath: c.filePath ?? undefined,
     })
-  const stream = await streamEventsForRef(task.id).catch((e) => {
-    logError('feed', e, `stream entries for ${task.id}`)
-    return []
-  })
+  const stream = !streamFeed
+    ? []
+    : await streamEventsForRef(task.id).catch((e) => {
+        logError('feed', e, `stream entries for ${task.id}`)
+        return []
+      })
   events.push(...streamFeedEvents(stream, me))
   return events
+}
+
+// Stream is a beta behind a Settings flag (App sets this): off, a PR's history shows none of it
+let streamFeed = false
+export const setStreamFeed = (on: boolean) => {
+  streamFeed = on
 }
 
 type StreamTrail = { id: number; itemId: string; ts: string; kind: string; text: string | null; itemTitle: string }
