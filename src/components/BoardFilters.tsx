@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { type BoardFilter, type RepoOption, repoTitle } from '../lib/filters'
+import { Tip } from './Tip'
 
 const CI_OPTIONS = [
   { value: 'pass', label: '✓ pass' },
@@ -50,23 +51,23 @@ const MultiSelect = ({ label, options, selected, onChange }: MultiSelectProps) =
         <div className="absolute left-0 top-full z-30 mt-1 flex min-w-44 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
           {options.length === 0 && <span className="px-3 py-2 text-xs text-deck-500">nothing to filter</span>}
           {options.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              title={o.title}
-              onClick={() => toggle(o.value)}
-              className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-3 py-2 text-left text-xs text-deck-200 hover:bg-deck-700"
-            >
-              <span
-                className={`flex h-3.5 w-3.5 items-center justify-center rounded border text-[9px] ${
-                  selected.includes(o.value) ? 'border-grass-500 bg-grass-600 text-white' : 'border-deck-600'
-                }`}
+            <Tip key={o.value} label={o.title}>
+              <button
+                type="button"
+                onClick={() => toggle(o.value)}
+                className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-3 py-2 text-left text-xs text-deck-200 hover:bg-deck-700"
               >
-                {selected.includes(o.value) && '✓'}
-              </span>
-              {o.label}
-              {o.count !== undefined && <span className="ml-auto pl-2 text-deck-500">({o.count})</span>}
-            </button>
+                <span
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded border text-[9px] ${
+                    selected.includes(o.value) ? 'border-grass-500 bg-grass-600 text-white' : 'border-deck-600'
+                  }`}
+                >
+                  {selected.includes(o.value) && '✓'}
+                </span>
+                {o.label}
+                {o.count !== undefined && <span className="ml-auto pl-2 text-deck-500">({o.count})</span>}
+              </button>
+            </Tip>
           ))}
           {on && (
             <button

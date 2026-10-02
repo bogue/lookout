@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { CardAction, CardActionId } from '../lib/cardactions'
+import { Tip } from './Tip'
 
 const iconProps = {
   width: 14,
@@ -57,17 +58,17 @@ type ListProps = {
 export const CardMenuList = ({ actions, onSelect }: ListProps) => (
   <>
     {actions.map((a) => (
-      <button
-        key={a.id}
-        type="button"
-        title={a.title}
-        onClick={() => onSelect(a.id)}
-        className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs ${
-          a.danger ? 'text-red-300 hover:bg-red-600/20' : 'text-deck-200 hover:bg-deck-700'
-        }`}
-      >
-        {ICONS[a.id]} {a.label}
-      </button>
+      <Tip key={a.id} label={a.title}>
+        <button
+          type="button"
+          onClick={() => onSelect(a.id)}
+          className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs ${
+            a.danger ? 'text-red-300 hover:bg-red-600/20' : 'text-deck-200 hover:bg-deck-700'
+          }`}
+        >
+          {ICONS[a.id]} {a.label}
+        </button>
+      </Tip>
     ))}
   </>
 )

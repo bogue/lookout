@@ -5,6 +5,7 @@ import { STAGES } from '../lib/stages'
 import type { ActionButton, ButtonBoard, Stage } from '../types'
 import { ACTION_ICON_NAMES, ActionIcon } from './ActionIcon'
 import { CommandTextarea } from './CommandTextarea'
+import { Tip } from './Tip'
 
 type Props = {
   board: ButtonBoard
@@ -82,20 +83,20 @@ export const ActionEditor = ({ board, button: b, primary, commands, onChange, on
             {ACTION_ICON_NAMES.map((name) => {
               const on = (b.icon ?? 'play') === name
               return (
-                <button
-                  key={name}
-                  type="button"
-                  title={name}
-                  aria-pressed={on}
-                  onClick={() => onChange({ icon: name }, true)}
-                  className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded border ${
-                    on
-                      ? 'border-grass-500 bg-grass-600/20 text-grass-300'
-                      : 'border-deck-600 text-deck-400 hover:bg-deck-700 hover:text-deck-200'
-                  }`}
-                >
-                  <ActionIcon name={name} size={16} />
-                </button>
+                <Tip key={name} label={name}>
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onChange({ icon: name }, true)}
+                    className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded border ${
+                      on
+                        ? 'border-grass-500 bg-grass-600/20 text-grass-300'
+                        : 'border-deck-600 text-deck-400 hover:bg-deck-700 hover:text-deck-200'
+                    }`}
+                  >
+                    <ActionIcon name={name} size={16} />
+                  </button>
+                </Tip>
               )
             })}
           </div>
@@ -118,15 +119,15 @@ export const ActionEditor = ({ board, button: b, primary, commands, onChange, on
             { token: '<pr_id>', hint: 'the PR number' },
             { token: '<branch_name>', hint: "the PR's branch" },
           ].map(({ token, hint }) => (
-            <button
-              key={token}
-              type="button"
-              title={`Filled with ${hint} when the action runs`}
-              onClick={() => onChange({ prompt: appendToken(b.prompt, token) }, true)}
-              className="cursor-pointer rounded border border-grass-700/60 bg-grass-600/15 px-1.5 py-0.5 font-mono text-grass-300 hover:bg-grass-600/30"
-            >
-              {token} +
-            </button>
+            <Tip key={token} label={`Filled with ${hint} when the action runs`}>
+              <button
+                type="button"
+                onClick={() => onChange({ prompt: appendToken(b.prompt, token) }, true)}
+                className="cursor-pointer rounded border border-grass-700/60 bg-grass-600/15 px-1.5 py-0.5 font-mono text-grass-300 hover:bg-grass-600/30"
+              >
+                {token} +
+              </button>
+            </Tip>
           ))}
         </div>
       </Section>
@@ -163,14 +164,15 @@ export const ActionEditor = ({ board, button: b, primary, commands, onChange, on
                   ))}
                 </select>
                 <span className="text-xs text-deck-500">is any of</span>
-                <button
-                  type="button"
-                  onClick={() => setConditions(b.conditions.filter((_, j) => j !== idx))}
-                  title="Remove this rule"
-                  className="ml-auto cursor-pointer rounded border border-deck-600 px-1.5 py-0.5 text-sm leading-none text-deck-400 hover:border-red-400/50 hover:text-red-300"
-                >
-                  −
-                </button>
+                <Tip label="Remove this rule">
+                  <button
+                    type="button"
+                    onClick={() => setConditions(b.conditions.filter((_, j) => j !== idx))}
+                    className="ml-auto cursor-pointer rounded border border-deck-600 px-1.5 py-0.5 text-sm leading-none text-deck-400 hover:border-red-400/50 hover:text-red-300"
+                  >
+                    −
+                  </button>
+                </Tip>
               </div>
               <div className="flex flex-wrap gap-1">
                 {field.values.map(({ value, label }) => {

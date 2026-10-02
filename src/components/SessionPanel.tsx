@@ -29,6 +29,7 @@ import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
 import { SessionPicker } from './SessionPicker'
 import { SidePanel } from './SidePanel'
+import { Tip } from './Tip'
 
 type Props = {
   task: ReviewTask
@@ -124,24 +125,26 @@ const ReplyBox = ({
       <div className="flex items-center gap-2 px-2 pb-2">
         <div className="flex min-w-0 flex-1 items-center">{tools}</div>
         {running ? (
-          <button
-            type="button"
-            onClick={onCancel}
-            title="Stop this turn — the session stays resumable, then send a new message"
-            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-red-500/30 text-red-100 hover:bg-red-500/50"
-          >
-            <span className="h-2.5 w-2.5 rounded-[2px] bg-current" />
-          </button>
+          <Tip label="Stop this turn — the session stays resumable, then send a new message">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-red-500/30 text-red-100 hover:bg-red-500/50"
+            >
+              <span className="h-2.5 w-2.5 rounded-[2px] bg-current" />
+            </button>
+          </Tip>
         ) : (
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={!canReply || !value.trim()}
-            title="Send (Enter)"
-            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-grass-600 text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
-          >
-            <ArrowUpIcon />
-          </button>
+          <Tip label="Send (Enter)">
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={!canReply || !value.trim()}
+              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-grass-600 text-white hover:bg-grass-500 disabled:cursor-default disabled:opacity-40"
+            >
+              <ArrowUpIcon />
+            </button>
+          </Tip>
         )}
       </div>
     </div>
@@ -172,19 +175,19 @@ const Linkify = ({ text, onOpen }: { text: string; onOpen: (url: string, externa
   <>
     {text.split(URL_SPLIT).map((part, i) =>
       i % 2 === 1 ? (
-        <a
-          // biome-ignore lint/suspicious/noArrayIndexKey: static text snapshot
-          key={i}
-          href={part}
-          title="Open in app browser (⌘+click for default browser)"
-          onClick={(e) => {
-            e.preventDefault()
-            onOpen(part, e.metaKey)
-          }}
-          className="cursor-pointer underline decoration-dotted underline-offset-2 hover:text-grass-300"
-        >
-          {part}
-        </a>
+        // biome-ignore lint/suspicious/noArrayIndexKey: static text snapshot
+        <Tip key={i} label="Open in app browser (⌘+click for default browser)">
+          <a
+            href={part}
+            onClick={(e) => {
+              e.preventDefault()
+              onOpen(part, e.metaKey)
+            }}
+            className="cursor-pointer underline decoration-dotted underline-offset-2 hover:text-grass-300"
+          >
+            {part}
+          </a>
+        </Tip>
       ) : (
         part
       ),
@@ -200,17 +203,18 @@ const ToolLine = ({ text }: { text: string }) => {
   const name = cut === -1 ? text : text.slice(0, cut)
   const detail = cut === -1 ? '' : text.slice(cut + 1)
   return (
-    <button
-      type="button"
-      onClick={() => setOpen((s) => !s)}
-      title={open ? 'Collapse' : text}
-      className="flex w-full cursor-crosshair items-baseline gap-1.5 text-left font-mono text-xs leading-5 text-deck-500 hover:text-deck-300"
-    >
-      <span className="shrink-0 text-deck-400">{name}</span>
-      <span className={open ? 'min-w-0 flex-1 whitespace-pre-wrap break-all' : 'min-w-0 flex-1 truncate'}>
-        {detail}
-      </span>
-    </button>
+    <Tip label={open ? 'Collapse' : text}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="flex w-full cursor-crosshair items-baseline gap-1.5 text-left font-mono text-xs leading-5 text-deck-500 hover:text-deck-300"
+      >
+        <span className="shrink-0 text-deck-400">{name}</span>
+        <span className={open ? 'min-w-0 flex-1 whitespace-pre-wrap break-all' : 'min-w-0 flex-1 truncate'}>
+          {detail}
+        </span>
+      </button>
+    </Tip>
   )
 }
 
@@ -224,14 +228,15 @@ const UserLine = ({ text, onOpen }: { text: string; onOpen: (url: string, extern
     </span>
   )
   return long ? (
-    <button
-      type="button"
-      onClick={() => setOpen((s) => !s)}
-      title={open ? 'Collapse' : 'Show the full prompt'}
-      className="cursor-pointer text-left font-mono text-grass-300"
-    >
-      {body}
-    </button>
+    <Tip label={open ? 'Collapse' : 'Show the full prompt'}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="cursor-pointer text-left font-mono text-grass-300"
+      >
+        {body}
+      </button>
+    </Tip>
   ) : (
     <p className="font-mono text-grass-300">{body}</p>
   )
@@ -659,34 +664,36 @@ export const SessionPanel = ({
                 {isPr ? (
                   // my own PR's ⋯ was only Snooze + Open in browser (the header link already opens it;
                   // a run's stop and a session's resume live in the feed), so snooze gets its own button
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSnooze(!task.snoozed)
-                      // snoozing hides the card, so leave the panel; unsnoozing keeps it open
-                      if (!task.snoozed) close()
-                    }}
-                    title={`${snooze.label}: ${snooze.title}`}
-                    aria-label={snooze.label}
-                    aria-pressed={task.snoozed}
-                    className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border text-sm ${
-                      task.snoozed
-                        ? 'border-grass-600 bg-grass-600/20 text-grass-300'
-                        : 'border-deck-600 text-deck-300 hover:bg-deck-800 hover:text-deck-100'
-                    }`}
-                  >
-                    <CardActionIcon id="snooze" />
-                  </button>
-                ) : (
-                  <div className="relative">
+                  <Tip label={`${snooze.label}: ${snooze.title}`}>
                     <button
                       type="button"
-                      onClick={() => setMoreOpen((s) => !s)}
-                      title="More options"
-                      className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-deck-600 text-sm text-deck-300 hover:bg-deck-700"
+                      onClick={() => {
+                        onSnooze(!task.snoozed)
+                        // snoozing hides the card, so leave the panel; unsnoozing keeps it open
+                        if (!task.snoozed) close()
+                      }}
+                      aria-label={snooze.label}
+                      aria-pressed={task.snoozed}
+                      className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border text-sm ${
+                        task.snoozed
+                          ? 'border-grass-600 bg-grass-600/20 text-grass-300'
+                          : 'border-deck-600 text-deck-300 hover:bg-deck-800 hover:text-deck-100'
+                      }`}
                     >
-                      ⋯
+                      <CardActionIcon id="snooze" />
                     </button>
+                  </Tip>
+                ) : (
+                  <div className="relative">
+                    <Tip label="More options">
+                      <button
+                        type="button"
+                        onClick={() => setMoreOpen((s) => !s)}
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-deck-600 text-sm text-deck-300 hover:bg-deck-700"
+                      >
+                        ⋯
+                      </button>
+                    </Tip>
                     {moreOpen && (
                       <div className="absolute right-0 top-full z-40 mt-1 flex w-60 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
                         <CardMenuList
@@ -717,79 +724,83 @@ export const SessionPanel = ({
               <code className="truncate rounded border border-deck-700 bg-deck-800 px-1.5 py-0.5 font-mono text-deck-300">
                 {task.branch}
               </code>
-              <button
-                type="button"
-                onClick={copyBranch}
-                title="Copy branch name"
-                className="cursor-pointer text-deck-500 hover:text-grass-300"
-              >
-                {copiedBranch ? 'copied!' : '⧉'}
-              </button>
+              <Tip label="Copy branch name">
+                <button
+                  type="button"
+                  onClick={copyBranch}
+                  className="cursor-pointer text-deck-500 hover:text-grass-300"
+                >
+                  {copiedBranch ? 'copied!' : '⧉'}
+                </button>
+              </Tip>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2 border-b border-deck-800 px-4 py-2">
             {buttons.map((b, i) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => onRunButton(b)}
-                disabled={running}
-                title={b.prompt}
-                className={
-                  i === 0
-                    ? 'cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-50'
-                    : 'cursor-pointer rounded-md border border-grass-600 px-3 py-1.5 text-sm text-grass-300 hover:bg-grass-600/20 disabled:opacity-50'
-                }
-              >
-                <span className="flex items-center gap-1.5">
-                  <ActionIcon name={b.icon} /> {b.label}
-                </span>
-              </button>
+              <Tip key={b.id} label={b.prompt}>
+                <button
+                  type="button"
+                  onClick={() => onRunButton(b)}
+                  disabled={running}
+                  className={
+                    i === 0
+                      ? 'cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-50'
+                      : 'cursor-pointer rounded-md border border-grass-600 px-3 py-1.5 text-sm text-grass-300 hover:bg-grass-600/20 disabled:opacity-50'
+                  }
+                >
+                  <span className="flex items-center gap-1.5">
+                    <ActionIcon name={b.icon} /> {b.label}
+                  </span>
+                </button>
+              </Tip>
             ))}
             <div className="ml-auto flex gap-2">
               {!isPr && (canApprove || approved) && (
-                <button
-                  type="button"
-                  onClick={approve}
-                  disabled={approving || approved}
-                  title="Approve the PR on GitHub and move it to Done"
-                  className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-60"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <CheckIcon /> {approved ? 'Approved' : approving ? 'Approving…' : 'Approve'}
-                  </span>
-                </button>
+                <Tip label="Approve the PR on GitHub and move it to Done">
+                  <button
+                    type="button"
+                    onClick={approve}
+                    disabled={approving || approved}
+                    className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-60"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <CheckIcon /> {approved ? 'Approved' : approving ? 'Approving…' : 'Approve'}
+                    </span>
+                  </button>
+                </Tip>
               )}
               {showMerge && mergeOpts && method && (
                 <div ref={mergeBoxRef} className="relative flex">
-                  <button
-                    type="button"
-                    onClick={askMerge}
-                    disabled={merging || !!mergeBlocked}
-                    title={mergeBlocked ?? `${MERGE_METHODS.find((x) => x.value === method)?.label} on GitHub`}
-                    className={`cursor-pointer bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-                      mergeOpts.allowed.length > 1 ? 'rounded-l-md' : 'rounded-md'
-                    }`}
-                  >
-                    {merging
-                      ? 'Merging…'
-                      : method === 'merge'
-                        ? 'Merge PR'
-                        : method === 'squash'
-                          ? 'Squash & merge'
-                          : 'Rebase & merge'}
-                  </button>
-                  {mergeOpts.allowed.length > 1 && (
+                  <Tip label={mergeBlocked ?? `${MERGE_METHODS.find((x) => x.value === method)?.label} on GitHub`}>
                     <button
                       type="button"
-                      onClick={() => setMethodMenu((s) => !s)}
+                      onClick={askMerge}
                       disabled={merging || !!mergeBlocked}
-                      title="Pick another merge strategy"
-                      className="cursor-pointer rounded-r-md border-l border-black/20 bg-grass-600 px-[9px] py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      className={`cursor-pointer bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+                        mergeOpts.allowed.length > 1 ? 'rounded-l-md' : 'rounded-md'
+                      }`}
                     >
-                      ▾
+                      {merging
+                        ? 'Merging…'
+                        : method === 'merge'
+                          ? 'Merge PR'
+                          : method === 'squash'
+                            ? 'Squash & merge'
+                            : 'Rebase & merge'}
                     </button>
+                  </Tip>
+                  {mergeOpts.allowed.length > 1 && (
+                    <Tip label="Pick another merge strategy">
+                      <button
+                        type="button"
+                        onClick={() => setMethodMenu((s) => !s)}
+                        disabled={merging || !!mergeBlocked}
+                        className="cursor-pointer rounded-r-md border-l border-black/20 bg-grass-600 px-[9px] py-1.5 text-sm hover:bg-grass-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        ▾
+                      </button>
+                    </Tip>
                   )}
                   {methodMenu && (
                     <div className="absolute right-0 top-full z-40 mt-1 flex w-56 flex-col rounded-md border border-deck-700 bg-deck-800 py-1 shadow-xl">
@@ -834,14 +845,15 @@ export const SessionPanel = ({
                   )}
                   {run.command && <span className="ml-auto truncate text-xs text-deck-500">{run.command}</span>}
                   {running && (
-                    <button
-                      type="button"
-                      onClick={onKill}
-                      title="Stop this run (the session stays resumable)"
-                      className={`shrink-0 cursor-pointer rounded border border-red-400/40 bg-red-500/20 px-2 py-0.5 font-sans text-xs text-red-200 hover:bg-red-500/40 ${run.command ? '' : 'ml-auto'}`}
-                    >
-                      ■ stop
-                    </button>
+                    <Tip label="Stop this run (the session stays resumable)">
+                      <button
+                        type="button"
+                        onClick={onKill}
+                        className={`shrink-0 cursor-pointer rounded border border-red-400/40 bg-red-500/20 px-2 py-0.5 font-sans text-xs text-red-200 hover:bg-red-500/40 ${run.command ? '' : 'ml-auto'}`}
+                      >
+                        ■ stop
+                      </button>
+                    </Tip>
                   )}
                   {/* progress runs along the header's bottom border, under the $ claude line */}
                   {running && (
@@ -907,15 +919,16 @@ export const SessionPanel = ({
           <div className="flex min-h-0 flex-1 flex-col bg-deck-950">
             <h4 className="flex shrink-0 items-center justify-between px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-deck-400">
               history
-              <button
-                type="button"
-                onClick={reloadFeed}
-                disabled={refreshing}
-                className="cursor-pointer text-deck-500 hover:text-deck-200 disabled:cursor-default"
-                title="Refresh history"
-              >
-                <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
-              </button>
+              <Tip label="Refresh history">
+                <button
+                  type="button"
+                  onClick={reloadFeed}
+                  disabled={refreshing}
+                  className="cursor-pointer text-deck-500 hover:text-deck-200 disabled:cursor-default"
+                >
+                  <span className={`inline-block ${refreshing ? 'animate-spin' : ''}`}>↻</span>
+                </button>
+              </Tip>
             </h4>
             {/* column-reverse anchors the chat to the bottom natively: short history sits next to the
                 reply box, and the view stays pinned to the newest event while the terminal above resizes */}
@@ -958,12 +971,9 @@ export const SessionPanel = ({
                         <span aria-hidden className="invisible ml-2 text-[10px]">
                           {meta}
                         </span>
-                        <span
-                          className="absolute right-2.5 bottom-1 text-[10px] text-deck-500"
-                          title={`${new Date(e.ts).toLocaleString()}${done ? ' · session completed' : ''}`}
-                        >
-                          {meta}
-                        </span>
+                        <Tip label={`${new Date(e.ts).toLocaleString()}${done ? ' · session completed' : ''}`}>
+                          <span className="absolute right-2.5 bottom-1 text-[10px] text-deck-500">{meta}</span>
+                        </Tip>
                       </>
                     )
                     // 18px = half a one-line bubble (8 + 20 + 8 px tall, leading-5 so an icon can't grow the
@@ -977,7 +987,6 @@ export const SessionPanel = ({
                       e.filePath || e.body || e.url || e.sessionId ? (
                         <button
                           type="button"
-                          title={e.sessionId ? `Resume session ${e.sessionId} in Ghostty` : undefined}
                           onClick={(ev) =>
                             e.body
                               ? openCaptured(e.body, e.text)
@@ -1017,14 +1026,7 @@ export const SessionPanel = ({
                             // the session this report answers sits behind it, like a card under a card:
                             // 20px further left, same right edge, peeking out on top, squarer, content grayed
                             <div className="grid">
-                              <div
-                                className="rounded-xl border border-grass-700/40 bg-grass-700/15 px-3 pt-2 pb-5 text-xs text-deck-300"
-                                title={
-                                  e.replyTo.exact
-                                    ? 'The session this report was captured from'
-                                    : 'The last session started before this report (the file names none)'
-                                }
-                              >
+                              <div className="rounded-xl border border-grass-700/40 bg-grass-700/15 px-3 pt-2 pb-5 text-xs text-deck-300">
                                 {/* the bubble stays solid; only what it says is toned down */}
                                 <span className="[filter:grayscale(70%)]">
                                   <IconBox name={e.replyTo.icon} small className="mr-0.5" /> {e.replyTo.text} ·{' '}

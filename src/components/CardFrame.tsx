@@ -2,6 +2,7 @@ import { type DragEvent, type MouseEvent, type ReactNode, useCallback, useState 
 import { avatarUrl } from '../lib/avatar'
 import type { CardAction, CardActionId } from '../lib/cardactions'
 import { CardMenuPopover, MENU_WIDTH } from './CardMenu'
+import { Tip } from './Tip'
 
 type Props = {
   title: string
@@ -61,22 +62,23 @@ export const CardFrame = ({
       className={`${BASE} ${className ?? ''}`}
     >
       {menu && (
-        <button
-          type="button"
-          title="Quick actions"
-          // the popover closes on any outside mousedown; this one is the toggle, not "outside"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            const r = e.currentTarget.getBoundingClientRect()
-            setMenuAt(menuAt ? null : { x: r.right - MENU_WIDTH, y: r.bottom + 4 })
-          }}
-          className={`card-menu-btn absolute top-2 right-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-deck-600 bg-deck-800 text-sm leading-none text-deck-300 hover:bg-deck-700 ${
-            menuAt ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-          }`}
-        >
-          ⋯
-        </button>
+        <Tip label="Quick actions">
+          <button
+            type="button"
+            // the popover closes on any outside mousedown; this one is the toggle, not "outside"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              const r = e.currentTarget.getBoundingClientRect()
+              setMenuAt(menuAt ? null : { x: r.right - MENU_WIDTH, y: r.bottom + 4 })
+            }}
+            className={`card-menu-btn absolute top-2 right-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-deck-600 bg-deck-800 text-sm leading-none text-deck-300 hover:bg-deck-700 ${
+              menuAt ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+          >
+            ⋯
+          </button>
+        </Tip>
       )}
       {menu && menuAt && <CardMenuPopover at={menuAt} onClose={closeMenu} {...menu} />}
       <p className={`text-sm font-medium leading-snug ${menu ? 'pr-7' : ''}`}>{title}</p>

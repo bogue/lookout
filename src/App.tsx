@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { GlobalSearch } from './components/GlobalSearch'
 import { NotificationBell } from './components/NotificationBell'
 import { SessionPanel } from './components/SessionPanel'
+import { Tip } from './components/Tip'
 import { visibleButtons } from './lib/buttons'
 import { type CardActionId, cardActions } from './lib/cardactions'
 import { CHAT_COMMAND, chatPrompt } from './lib/chat'
@@ -580,12 +581,13 @@ const App = () => {
       >
         {label}
         {badge ? (
-          <span
-            title="Unread notifications on this board"
-            className={`ml-1.5 rounded-full px-1.5 text-xs ${v === 'discovery' ? 'bg-deck-700 text-deck-300' : 'bg-amber-500 text-black'}`}
-          >
-            {badge}
-          </span>
+          <Tip label="Unread notifications on this board">
+            <span
+              className={`ml-1.5 rounded-full px-1.5 text-xs ${v === 'discovery' ? 'bg-deck-700 text-deck-300' : 'bg-amber-500 text-black'}`}
+            >
+              {badge}
+            </span>
+          </Tip>
         ) : null}
         <span className={`ml-1.5 text-xs ${view === v ? 'text-deck-400' : 'text-deck-600 group-hover:text-deck-500'}`}>
           ⌘{index + 1}
@@ -609,14 +611,15 @@ const App = () => {
       >
         {/* the wordmark doubles as a home button: back to the first tab */}
         <h1 data-tauri-drag-region className="mr-3">
-          <button
-            type="button"
-            onClick={() => switchView(TAB_ORDER[0].view)}
-            title={anyRunning ? 'A claude run is live' : `Back to ${TAB_ORDER[0].label}`}
-            className={`font-script cursor-default select-none text-xl text-white transition-transform duration-200 hover:-rotate-2 hover:scale-105 ${anyRunning ? 'wordmark-running' : ''}`}
-          >
-            Lookout
-          </button>
+          <Tip label={anyRunning ? 'A claude run is live' : `Back to ${TAB_ORDER[0].label}`}>
+            <button
+              type="button"
+              onClick={() => switchView(TAB_ORDER[0].view)}
+              className={`font-script cursor-default select-none text-xl text-white transition-transform duration-200 hover:-rotate-2 hover:scale-105 ${anyRunning ? 'wordmark-running' : ''}`}
+            >
+              Lookout
+            </button>
+          </Tip>
         </h1>
         {TAB_ORDER.filter((t) => t.view !== 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
         {/* drag region only fires on the element itself, so the wrapper needs it too:

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { BOARD_STAGES, STAGE_LABEL } from '../lib/stages'
 import type { ReviewTask } from '../types'
+import { Tip } from './Tip'
 
 type Props = {
   tasks: ReviewTask[]
@@ -95,14 +96,15 @@ export const GlobalSearch = ({ tasks, onOpen, onReview, onWatch, onIgnore, onUni
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {inBoard ? (
-                    <button
-                      type="button"
-                      title="Go to board + open the card"
-                      onClick={() => act(() => onOpen(t))}
-                      className={`${btn} bg-grass-600 hover:bg-grass-500`}
-                    >
-                      Open
-                    </button>
+                    <Tip label="Go to board + open the card">
+                      <button
+                        type="button"
+                        onClick={() => act(() => onOpen(t))}
+                        className={`${btn} bg-grass-600 hover:bg-grass-500`}
+                      >
+                        Open
+                      </button>
+                    </Tip>
                   ) : t.stage === 'ignored' ? (
                     <button
                       type="button"
@@ -113,14 +115,15 @@ export const GlobalSearch = ({ tasks, onOpen, onReview, onWatch, onIgnore, onUni
                     </button>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        title="Add to board + start /do-review now"
-                        onClick={() => act(() => onReview(t.id))}
-                        className={`${btn} bg-grass-600 hover:bg-grass-500`}
-                      >
-                        Review
-                      </button>
+                      <Tip label="Add to board + start /do-review now">
+                        <button
+                          type="button"
+                          onClick={() => act(() => onReview(t.id))}
+                          className={`${btn} bg-grass-600 hover:bg-grass-500`}
+                        >
+                          Review
+                        </button>
+                      </Tip>
                       <button
                         type="button"
                         onClick={() => act(() => onWatch(t.id))}

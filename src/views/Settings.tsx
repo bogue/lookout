@@ -11,6 +11,7 @@ import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
 import { SidePanel } from '../components/SidePanel'
+import { Tip } from '../components/Tip'
 import { dropAction } from '../lib/actionlist'
 import { avatarUrl } from '../lib/avatar'
 import { listSlashCommands } from '../lib/commands'
@@ -234,50 +235,55 @@ const ActionList = ({
               {lineAbove && <span className="absolute inset-x-2 -top-px h-0.5 rounded bg-grass-400" />}
               {lineBelow && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded bg-grass-400" />}
               {/* drag by the handle only, so a click on the row still opens it */}
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: a drag handle, like the board's draggable cards */}
-              <span
-                draggable
-                title="Drag to reorder — the first action is the primary"
-                onDragStart={(e) => {
-                  const row = e.currentTarget.closest('li')
-                  if (row) e.dataTransfer.setDragImage(row, 16, row.offsetHeight / 2)
-                  e.dataTransfer.setData('text/plain', b.id) // WebKit won't start a drag without it
-                  e.dataTransfer.effectAllowed = 'move'
-                  setDragging(b.id)
-                }}
-                onDragEnd={endDrag}
-                className="flex h-7 w-6 cursor-grab items-center justify-center text-deck-500 hover:text-deck-200 active:cursor-grabbing"
-              >
-                <GripIcon />
-              </span>
-              <button
-                type="button"
-                onClick={() => onOpen(b.id)}
-                title="Edit this action"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded text-left"
-              >
-                <ActionChip button={b} primary={i === 0} />
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-deck-500">
-                  {b.prompt || 'no prompt yet'}
+              <Tip label="Drag to reorder — the first action is the primary">
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: a drag handle, like the board's draggable cards */}
+                <span
+                  draggable
+                  onDragStart={(e) => {
+                    const row = e.currentTarget.closest('li')
+                    if (row) e.dataTransfer.setDragImage(row, 16, row.offsetHeight / 2)
+                    e.dataTransfer.setData('text/plain', b.id) // WebKit won't start a drag without it
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragging(b.id)
+                  }}
+                  onDragEnd={endDrag}
+                  className="flex h-7 w-6 cursor-grab items-center justify-center text-deck-500 hover:text-deck-200 active:cursor-grabbing"
+                >
+                  <GripIcon />
                 </span>
-                {badge && (
-                  <span className="shrink-0 rounded bg-deck-700 px-1.5 py-0.5 text-[11px] text-deck-300">
-                    <Icon name={badge.icon} size={12} /> {badge.label}
-                  </span>
-                )}
-              </button>
-              <div className="flex shrink-0 items-center gap-1">
-                <button type="button" title="Edit" onClick={() => onOpen(b.id)} className={iconBtn}>
-                  <PencilIcon />
-                </button>
+              </Tip>
+              <Tip label="Edit this action">
                 <button
                   type="button"
-                  title="Delete"
-                  onClick={() => onDelete(b)}
-                  className={`${iconBtn} hover:border-red-400/50 hover:text-red-300`}
+                  onClick={() => onOpen(b.id)}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded text-left"
                 >
-                  <TrashIcon />
+                  <ActionChip button={b} primary={i === 0} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-deck-500">
+                    {b.prompt || 'no prompt yet'}
+                  </span>
+                  {badge && (
+                    <span className="shrink-0 rounded bg-deck-700 px-1.5 py-0.5 text-[11px] text-deck-300">
+                      <Icon name={badge.icon} size={12} /> {badge.label}
+                    </span>
+                  )}
                 </button>
+              </Tip>
+              <div className="flex shrink-0 items-center gap-1">
+                <Tip label="Edit">
+                  <button type="button" onClick={() => onOpen(b.id)} className={iconBtn}>
+                    <PencilIcon />
+                  </button>
+                </Tip>
+                <Tip label="Delete">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(b)}
+                    className={`${iconBtn} hover:border-red-400/50 hover:text-red-300`}
+                  >
+                    <TrashIcon />
+                  </button>
+                </Tip>
               </div>
             </li>
           )
@@ -472,15 +478,16 @@ export const Settings = ({
         {version && <p className="mt-0.5 text-xs font-light text-deck-500">v{version}</p>}
         <p className="mt-5 flex items-center gap-2 text-sm text-deck-400">
           {config.githubUser ? (
-            <button
-              type="button"
-              onClick={() => openUrl(`https://github.com/${config.githubUser}`)}
-              title="Open GitHub profile"
-              className="flex cursor-pointer items-center gap-1.5 rounded-full bg-grass-600/20 py-0.5 pl-1 pr-2.5 font-medium text-grass-300 hover:bg-grass-600/35"
-            >
-              <img src={avatarUrl(config.githubUser)} alt={config.githubUser} className="h-5 w-5 rounded-full" />@
-              {config.githubUser}
-            </button>
+            <Tip label="Open GitHub profile">
+              <button
+                type="button"
+                onClick={() => openUrl(`https://github.com/${config.githubUser}`)}
+                className="flex cursor-pointer items-center gap-1.5 rounded-full bg-grass-600/20 py-0.5 pl-1 pr-2.5 font-medium text-grass-300 hover:bg-grass-600/35"
+              >
+                <img src={avatarUrl(config.githubUser)} alt={config.githubUser} className="h-5 w-5 rounded-full" />@
+                {config.githubUser}
+              </button>
+            </Tip>
           ) : (
             <span className="italic text-deck-500">(detected on first sync)</span>
           )}
@@ -632,9 +639,9 @@ export const Settings = ({
       >
         {logFile && (
           <div className="flex items-center gap-2 border-t border-deck-800 pt-2">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-deck-500" title={logFile}>
-              {logFile}
-            </span>
+            <Tip label={logFile}>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-deck-500">{logFile}</span>
+            </Tip>
             {/* both tolerate a log file that doesn't exist yet (nothing has been written) */}
             <button
               type="button"

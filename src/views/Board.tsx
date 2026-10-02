@@ -3,6 +3,7 @@ import { BoardFilters } from '../components/BoardFilters'
 import { CardFrame, type CardMenu } from '../components/CardFrame'
 import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFailBadge'
 import { Icon } from '../components/Icon'
+import { Tip } from '../components/Tip'
 import { type BoardFilter, emptyFilter, matchesFilter, openAuthorOptions, openRepoOptions } from '../lib/filters'
 import type { Run } from '../lib/runs'
 import { STAGE_LABEL } from '../lib/stages'
@@ -87,17 +88,18 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
           </span>
         )}
         {t.hasNewActivity && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onSeen()
-            }}
-            title="New comments/reviews since last look — click to dismiss"
-            className="cursor-pointer rounded bg-amber-500/20 px-1 py-0.5 text-amber-300 hover:bg-amber-500/40"
-          >
-            <Icon name="comment" size={12} /> new
-          </button>
+          <Tip label="New comments/reviews since last look — click to dismiss">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSeen()
+              }}
+              className="cursor-pointer rounded bg-amber-500/20 px-1 py-0.5 text-amber-300 hover:bg-amber-500/40"
+            >
+              <Icon name="comment" size={12} /> new
+            </button>
+          </Tip>
         )}
         {/* merged/closed: the build no longer matters */}
         {t.prState === 'open' && (
@@ -220,12 +222,11 @@ export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorde
                     : 'bg-grass-600/10'
               }`}
             >
-              <h3
-                title={col.hint}
-                className="shrink-0 cursor-help px-1 text-xs font-semibold uppercase tracking-wide text-deck-300"
-              >
-                {col.title} <span className="font-normal text-deck-400">({items.length})</span>
-              </h3>
+              <Tip label={col.hint}>
+                <h3 className="w-fit shrink-0 cursor-help px-1 text-xs font-semibold uppercase tracking-wide text-deck-300">
+                  {col.title} <span className="font-normal text-deck-400">({items.length})</span>
+                </h3>
+              </Tip>
               {/* p-px: WebKit clips 1px card borders sitting exactly on the scroll container's
                   (fractional-width) clip edge — give them 1px of breathing room */}
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-px">

@@ -1,6 +1,7 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useState } from 'react'
 import { type CheckItem, checkDuration } from '../lib/prboard'
+import { Tip } from './Tip'
 
 const ICON: Record<CheckItem['state'], { glyph: string; className: string }> = {
   fail: { glyph: '✗', className: 'text-red-400' },
@@ -18,20 +19,21 @@ const STATUS: Record<CheckItem['state'], string> = {
 
 const Row = ({ c }: { c: CheckItem }) => (
   <li>
-    <button
-      type="button"
-      onClick={() => c.url && openUrl(c.url)}
-      disabled={!c.url}
-      title={c.url ? 'Open the check on GitHub' : undefined}
-      className="flex w-full cursor-pointer items-baseline gap-2 rounded px-2 py-1 text-left hover:bg-deck-800 disabled:cursor-default"
-    >
-      <span className={`w-3 shrink-0 text-center ${ICON[c.state].className}`}>{ICON[c.state].glyph}</span>
-      <span className="min-w-0 truncate text-deck-200">{c.name}</span>
-      <span className="shrink-0 text-deck-500">
-        {STATUS[c.state]}
-        {(c.state === 'fail' || c.state === 'pass') && c.seconds !== null && ` ${checkDuration(c.seconds)}`}
-      </span>
-    </button>
+    <Tip label={c.url ? 'Open the check on GitHub' : undefined}>
+      <button
+        type="button"
+        onClick={() => c.url && openUrl(c.url)}
+        disabled={!c.url}
+        className="flex w-full cursor-pointer items-baseline gap-2 rounded px-2 py-1 text-left hover:bg-deck-800 disabled:cursor-default"
+      >
+        <span className={`w-3 shrink-0 text-center ${ICON[c.state].className}`}>{ICON[c.state].glyph}</span>
+        <span className="min-w-0 truncate text-deck-200">{c.name}</span>
+        <span className="shrink-0 text-deck-500">
+          {STATUS[c.state]}
+          {(c.state === 'fail' || c.state === 'pass') && c.seconds !== null && ` ${checkDuration(c.seconds)}`}
+        </span>
+      </button>
+    </Tip>
   </li>
 )
 
@@ -78,19 +80,20 @@ export const ChecksBox = ({ checks, expanded }: { checks: CheckItem[]; expanded:
     .join(', ')
   return (
     <div className="border-t border-deck-800 px-3 pt-2 text-xs">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        title={`${summary} checks`}
-        className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left hover:bg-deck-800"
-      >
-        <span className="text-red-400">✗</span>
-        <span className="text-deck-200">
-          Merge conditions are failing ({failing.length}/{ran})
-        </span>
-        <span className="text-deck-500">{summary} checks</span>
-        <span className="ml-auto text-deck-400">{open ? '⌄' : '›'}</span>
-      </button>
+      <Tip label={`${summary} checks`}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left hover:bg-deck-800"
+        >
+          <span className="text-red-400">✗</span>
+          <span className="text-deck-200">
+            Merge conditions are failing ({failing.length}/{ran})
+          </span>
+          <span className="text-deck-500">{summary} checks</span>
+          <span className="ml-auto text-deck-400">{open ? '⌄' : '›'}</span>
+        </button>
+      </Tip>
       {open && (
         <div className="max-h-[30vh] overflow-y-auto pb-1 pl-5">
           <Group label={failing.length === 1 ? 'failing check' : 'failing checks'} items={failing} open />

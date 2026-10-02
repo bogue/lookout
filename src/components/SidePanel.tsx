@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { isTextField, stepPanelWidth } from '../lib/panelwidth'
+import { Tip } from './Tip'
 
 type SidePanelApi = { close: () => void } // animated close, shared by the ✕, backdrop, and Esc
 
@@ -89,18 +90,19 @@ export const SidePanel = ({ onClose, children, initialWidth, minWidth = DEFAULT_
         style={{ width }}
         className={`fixed inset-y-0 right-0 z-20 flex max-w-[92vw] transform flex-col border-l border-deck-700 bg-deck-900 shadow-2xl transition-transform duration-200 ease-out ${shown ? 'translate-x-0' : 'translate-x-full'}`}
       >
-        <button
-          type="button"
-          aria-label="Resize panel"
-          title="Drag to resize"
-          onPointerDown={(e) => {
-            e.preventDefault()
-            resizing.current = true
-            document.body.style.userSelect = 'none'
-            document.body.style.cursor = 'col-resize'
-          }}
-          className="absolute inset-y-0 left-0 z-40 w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent hover:bg-grass-500/40"
-        />
+        <Tip label="Drag to resize">
+          <button
+            type="button"
+            aria-label="Resize panel"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              resizing.current = true
+              document.body.style.userSelect = 'none'
+              document.body.style.cursor = 'col-resize'
+            }}
+            className="absolute inset-y-0 left-0 z-40 w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent hover:bg-grass-500/40"
+          />
+        </Tip>
         {children({ close })}
       </div>
     </>

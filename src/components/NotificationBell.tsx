@@ -3,6 +3,7 @@ import type { IconName } from '../lib/icons'
 import { timeAgo } from '../lib/time'
 import type { Alert, AlertKind } from '../types'
 import { Icon } from './Icon'
+import { Tip } from './Tip'
 
 const svgAttrs = {
   width: 16,
@@ -92,19 +93,20 @@ export const NotificationBell = ({ alerts, onOpen, onArchive, onMarkAllRead, onA
 
   return (
     <div ref={wrapRef} className="relative">
-      <button
-        type="button"
-        onClick={() => (open ? close() : setOpen(true))}
-        title="Notifications"
-        className={`relative cursor-pointer rounded-md px-2 py-2 ${open ? 'z-30 bg-deck-700 text-white' : 'text-deck-400 hover:text-deck-200'}`}
-      >
-        <BellIcon />
-        {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 rounded-full bg-amber-500 px-1.5 text-xs text-black">
-            {unread}
-          </span>
-        )}
-      </button>
+      <Tip label="Notifications">
+        <button
+          type="button"
+          onClick={() => (open ? close() : setOpen(true))}
+          className={`relative cursor-pointer rounded-md px-2 py-2 ${open ? 'z-30 bg-deck-700 text-white' : 'text-deck-400 hover:text-deck-200'}`}
+        >
+          <BellIcon />
+          {unread > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 rounded-full bg-amber-500 px-1.5 text-xs text-black">
+              {unread}
+            </span>
+          )}
+        </button>
+      </Tip>
 
       {open && (
         <>
@@ -122,23 +124,25 @@ export const NotificationBell = ({ alerts, onOpen, onArchive, onMarkAllRead, onA
               <span className="text-sm text-deck-300">Needs your attention</span>
               {hasAny && (
                 <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={onMarkAllRead}
-                    disabled={unread === 0}
-                    title="Mark all as read"
-                    className="cursor-pointer rounded p-1 text-deck-400 hover:bg-deck-800 hover:text-deck-200 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-deck-400"
-                  >
-                    <CheckIcon />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onArchiveAll}
-                    title="Archive all"
-                    className="cursor-pointer rounded p-1 text-deck-400 hover:bg-deck-800 hover:text-deck-200"
-                  >
-                    <ArchiveIcon />
-                  </button>
+                  <Tip label="Mark all as read">
+                    <button
+                      type="button"
+                      onClick={onMarkAllRead}
+                      disabled={unread === 0}
+                      className="cursor-pointer rounded p-1 text-deck-400 hover:bg-deck-800 hover:text-deck-200 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-deck-400"
+                    >
+                      <CheckIcon />
+                    </button>
+                  </Tip>
+                  <Tip label="Archive all">
+                    <button
+                      type="button"
+                      onClick={onArchiveAll}
+                      className="cursor-pointer rounded p-1 text-deck-400 hover:bg-deck-800 hover:text-deck-200"
+                    >
+                      <ArchiveIcon />
+                    </button>
+                  </Tip>
                 </div>
               )}
             </div>
@@ -169,14 +173,15 @@ export const NotificationBell = ({ alerts, onOpen, onArchive, onMarkAllRead, onA
                   </button>
                   {/* overlays the row rather than reserving a column: it fades in over the content,
                       the gradient keeping the icon readable on top of whatever text it covers */}
-                  <button
-                    type="button"
-                    onClick={() => onArchive(a)}
-                    title="Archive — hides this one until something new happens on the PR"
-                    className="absolute inset-y-0 right-0 flex cursor-pointer items-center bg-gradient-to-l from-deck-800 from-60% to-transparent pl-12 pr-4 text-deck-400 opacity-0 transition-opacity hover:text-deck-100 focus-visible:opacity-100 group-hover:opacity-100"
-                  >
-                    <ArchiveIcon />
-                  </button>
+                  <Tip label="Archive — hides this one until something new happens on the PR">
+                    <button
+                      type="button"
+                      onClick={() => onArchive(a)}
+                      className="absolute inset-y-0 right-0 flex cursor-pointer items-center bg-gradient-to-l from-deck-800 from-60% to-transparent pl-12 pr-4 text-deck-400 opacity-0 transition-opacity hover:text-deck-100 focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      <ArchiveIcon />
+                    </button>
+                  </Tip>
                 </div>
               ))}
             </div>

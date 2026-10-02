@@ -3,6 +3,7 @@ import type { IconName } from '../lib/icons'
 import type { SessionOption } from '../lib/replytarget'
 import { messageTime } from '../lib/time'
 import { Icon } from './Icon'
+import { Tip } from './Tip'
 
 type Props = {
   options: SessionOption[] // the PR's sessions, newest first
@@ -38,20 +39,21 @@ export const SessionPicker = ({ options, selected, onSelect, open, onOpenChange 
 
   return (
     <div ref={boxRef} className="relative flex min-w-0">
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        title={current ? `Messages go to session ${current.sessionId}` : 'Messages start a new chat session'}
-        className={`flex min-w-0 max-w-[225px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs ${
-          current
-            ? 'bg-grass-600/25 text-grass-100 hover:bg-grass-600/35'
-            : 'bg-deck-700/70 text-deck-200 hover:bg-deck-700'
-        } ${open ? 'ring-1 ring-deck-500' : ''}`}
-      >
-        <Icon name={current ? current.icon : NEW_ICON} size={12} />
-        <span className="min-w-0 truncate">{current ? current.label : NEW_SHORT}</span>
-        <span className="text-deck-500">⌄</span>
-      </button>
+      <Tip label={current ? `Messages go to session ${current.sessionId}` : 'Messages start a new chat session'}>
+        <button
+          type="button"
+          onClick={() => onOpenChange(!open)}
+          className={`flex min-w-0 max-w-[225px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs ${
+            current
+              ? 'bg-grass-600/25 text-grass-100 hover:bg-grass-600/35'
+              : 'bg-deck-700/70 text-deck-200 hover:bg-deck-700'
+          } ${open ? 'ring-1 ring-deck-500' : ''}`}
+        >
+          <Icon name={current ? current.icon : NEW_ICON} size={12} />
+          <span className="min-w-0 truncate">{current ? current.label : NEW_SHORT}</span>
+          <span className="text-deck-500">⌄</span>
+        </button>
+      </Tip>
       {open && (
         <div className="absolute bottom-full left-0 z-40 mb-1 flex max-h-72 w-80 max-w-[calc(100vw-2rem)] flex-col overflow-y-auto rounded-xl border border-deck-700 bg-deck-800 py-1 shadow-lg">
           <button
@@ -65,19 +67,19 @@ export const SessionPicker = ({ options, selected, onSelect, open, onOpenChange 
           </button>
           {options.length > 0 && <div className="my-1 border-t border-deck-700" />}
           {options.map((o) => (
-            <button
-              key={o.sessionId}
-              type="button"
-              // picking the selected one again unselects it: back to a new chat
-              onClick={() => pick(o.sessionId === selected ? null : o.sessionId)}
-              title={o.sessionId}
-              className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm text-deck-200 hover:bg-deck-700"
-            >
-              <Icon name={o.icon} />
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              {o.ts && <span className="shrink-0 text-[10px] text-deck-500">{messageTime(o.ts)}</span>}
-              <span className="w-3 shrink-0 text-grass-400">{o.sessionId === selected ? '✓' : ''}</span>
-            </button>
+            <Tip key={o.sessionId} label={o.sessionId}>
+              <button
+                type="button"
+                // picking the selected one again unselects it: back to a new chat
+                onClick={() => pick(o.sessionId === selected ? null : o.sessionId)}
+                className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm text-deck-200 hover:bg-deck-700"
+              >
+                <Icon name={o.icon} />
+                <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                {o.ts && <span className="shrink-0 text-[10px] text-deck-500">{messageTime(o.ts)}</span>}
+                <span className="w-3 shrink-0 text-grass-400">{o.sessionId === selected ? '✓' : ''}</span>
+              </button>
+            </Tip>
           ))}
         </div>
       )}

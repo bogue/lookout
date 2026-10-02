@@ -1,6 +1,7 @@
 import { Command } from '@tauri-apps/plugin-shell'
 import { useState } from 'react'
 import { PrLink } from '../components/PrLink'
+import { Tip } from '../components/Tip'
 import type { ReviewTask } from '../types'
 
 type Props = { tasks: ReviewTask[] }
@@ -82,15 +83,15 @@ export const History = ({ tasks }: Props) => {
             {t.reviewFiles.length > 0 && (
               <div className="mt-2 flex flex-col gap-1">
                 {t.reviewFiles.map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => openInVsCode(f)}
-                    title={f}
-                    className="cursor-pointer self-start truncate font-mono text-xs text-grass-400 hover:underline"
-                  >
-                    {f.split('/').at(-1)} ↗
-                  </button>
+                  <Tip key={f} label={f}>
+                    <button
+                      type="button"
+                      onClick={() => openInVsCode(f)}
+                      className="cursor-pointer self-start truncate font-mono text-xs text-grass-400 hover:underline"
+                    >
+                      {f.split('/').at(-1)} ↗
+                    </button>
+                  </Tip>
                 ))}
               </div>
             )}

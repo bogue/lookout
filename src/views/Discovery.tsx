@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CardFrame } from '../components/CardFrame'
 import { Icon } from '../components/Icon'
+import { Tip } from '../components/Tip'
 import { openPrWindow } from '../lib/prwindow'
 import { moveRepoBefore } from '../lib/repoorder'
 import { timeAgo } from '../lib/time'
@@ -37,19 +38,20 @@ const RowMenu = ({
   const item = 'cursor-pointer px-3 py-1.5 text-left text-xs text-deck-200 hover:bg-deck-700'
   return (
     <div className="relative">
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((o) => !o)
-        }}
-        title="More options"
-        className={`flex cursor-pointer items-center rounded border border-deck-600 text-deck-300 hover:bg-deck-700 ${
-          big ? 'h-7 px-2.5 text-sm' : 'h-5 px-1.5'
-        }`}
-      >
-        ⋯
-      </button>
+      <Tip label="More options">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setOpen((o) => !o)
+          }}
+          className={`flex cursor-pointer items-center rounded border border-deck-600 text-deck-300 hover:bg-deck-700 ${
+            big ? 'h-7 px-2.5 text-sm' : 'h-5 px-1.5'
+          }`}
+        >
+          ⋯
+        </button>
+      </Tip>
       {open && (
         <>
           <button
@@ -134,24 +136,29 @@ const DiscoveryCard = ({
     }}
     className={`${t.isDraft ? 'card-draft' : ''} ${t.seen ? '' : 'ring-1 ring-grass-500/60'}`}
   >
-    {!t.seen && <span className="h-2 w-2 rounded-full bg-grass-400" title="New — not seen yet" />}
+    {!t.seen && (
+      <Tip label="New — not seen yet">
+        <span className="h-2 w-2 rounded-full bg-grass-400" />
+      </Tip>
+    )}
     {t.isDraft && <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">✎ Draft</span>}
     {t.reviewRequested && <span className="rounded bg-amber-500/20 px-1 py-0.5 text-amber-300">review requested</span>}
     <span className="rounded bg-grass-600/20 px-1 py-0.5 font-medium text-grass-300">{timeAgo(t.prCreatedAt)}</span>
     <div className="ml-auto flex items-center gap-1">
-      <button
-        type="button"
-        title="Add to board + start /do-review now"
-        onClick={(e) => {
-          e.stopPropagation()
-          onReview(t.id)
-        }}
-        className={`cursor-pointer rounded bg-grass-600 font-medium text-white hover:bg-grass-500 ${
-          wide ? 'h-7 px-3 text-sm' : 'h-5 px-1.5'
-        }`}
-      >
-        review
-      </button>
+      <Tip label="Add to board + start /do-review now">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onReview(t.id)
+          }}
+          className={`cursor-pointer rounded bg-grass-600 font-medium text-white hover:bg-grass-500 ${
+            wide ? 'h-7 px-3 text-sm' : 'h-5 px-1.5'
+          }`}
+        >
+          review
+        </button>
+      </Tip>
       <button
         type="button"
         onClick={(e) => {
@@ -253,14 +260,15 @@ export const Discovery = ({
         <div className="flex items-center gap-2">
           {focus ? (
             <>
-              <button
-                type="button"
-                onClick={() => setFocus(null)}
-                title="Back to all projects (Esc)"
-                className="cursor-pointer rounded border border-deck-600 px-1.5 text-sm text-deck-300 hover:bg-deck-700"
-              >
-                ←
-              </button>
+              <Tip label="Back to all projects (Esc)">
+                <button
+                  type="button"
+                  onClick={() => setFocus(null)}
+                  className="cursor-pointer rounded border border-deck-600 px-1.5 text-sm text-deck-300 hover:bg-deck-700"
+                >
+                  ←
+                </button>
+              </Tip>
               <h2 className="text-lg font-semibold">
                 <span className="text-deck-400">{focus.split('/')[0]}/</span>
                 {focus.split('/')[1]}
@@ -339,41 +347,44 @@ export const Discovery = ({
                   {/* the header is the drag handle: cards keep their own click/menu affordances.
                       Focus mode drops it: the view header already names the project. */}
                   {!focused && (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: column drag handle
-                    <div
-                      draggable
-                      onDoubleClick={() => setFocus(repo)}
-                      onDragStart={(e) => {
-                        // WebKit requires setData for the drag to actually start
-                        e.dataTransfer.setData('text/plain', repo)
-                        e.dataTransfer.effectAllowed = 'move'
-                        setDragging(repo)
-                      }}
-                      onDragEnd={() => {
-                        setDragging(null)
-                        setDropBefore(undefined)
-                      }}
-                      title={
+                    <Tip
+                      label={
                         collapsed
                           ? `${repo} — nothing new (drag to reorder, double-click to focus)`
                           : 'Drag to reorder projects, double-click to focus'
                       }
-                      className={`flex cursor-grab gap-2 text-sm active:cursor-grabbing ${
-                        collapsed ? 'min-h-0 flex-1 justify-center py-1' : 'mb-1 shrink-0 items-center px-1 pb-1'
-                      }`}
                     >
-                      {/* GitHub-style repo label: muted owner, bold repo, count in a pill */}
-                      <span className={`min-w-0 truncate ${collapsed ? '[writing-mode:vertical-rl]' : ''}`}>
-                        <span className="text-deck-400">{repo.split('/')[0]}/</span>
-                        <span className="font-semibold text-deck-100">{repo.split('/')[1]}</span>
-                      </span>
-                      {/* the count would always read 0 on a collapsed column */}
-                      {!collapsed && (
-                        <span className="shrink-0 rounded-full bg-deck-700 px-1.5 py-0.5 text-xs text-deck-300">
-                          {items.length}
+                      {/* biome-ignore lint/a11y/noStaticElementInteractions: column drag handle */}
+                      <div
+                        draggable
+                        onDoubleClick={() => setFocus(repo)}
+                        onDragStart={(e) => {
+                          // WebKit requires setData for the drag to actually start
+                          e.dataTransfer.setData('text/plain', repo)
+                          e.dataTransfer.effectAllowed = 'move'
+                          setDragging(repo)
+                        }}
+                        onDragEnd={() => {
+                          setDragging(null)
+                          setDropBefore(undefined)
+                        }}
+                        className={`flex cursor-grab gap-2 text-sm active:cursor-grabbing ${
+                          collapsed ? 'min-h-0 flex-1 justify-center py-1' : 'mb-1 shrink-0 items-center px-1 pb-1'
+                        }`}
+                      >
+                        {/* GitHub-style repo label: muted owner, bold repo, count in a pill */}
+                        <span className={`min-w-0 truncate ${collapsed ? '[writing-mode:vertical-rl]' : ''}`}>
+                          <span className="text-deck-400">{repo.split('/')[0]}/</span>
+                          <span className="font-semibold text-deck-100">{repo.split('/')[1]}</span>
                         </span>
-                      )}
-                    </div>
+                        {/* the count would always read 0 on a collapsed column */}
+                        {!collapsed && (
+                          <span className="shrink-0 rounded-full bg-deck-700 px-1.5 py-0.5 text-xs text-deck-300">
+                            {items.length}
+                          </span>
+                        )}
+                      </div>
+                    </Tip>
                   )}
                   {/* p-px: WebKit clips 1px card borders sitting exactly on the scroll container's
                       (fractional-width) clip edge — give them 1px of breathing room */}

@@ -87,11 +87,12 @@ export const hasConflicts = (mergeable?: string | null): boolean => mergeable ==
 
 // Every PR board column, in order, with the label the UI shows for it. Single source of truth for the
 // board's headers and the Settings action editor.
-export const PR_COLUMNS: { value: PrColumn; label: string }[] = [
-  { value: 'waiting', label: 'Waiting' },
-  { value: 'in_review', label: 'In Review' },
-  { value: 'ready', label: 'Ready to merge' },
-  { value: 'done', label: 'Done' },
+// hint doubles as the column's tooltip: what a card in it actually means (classifyColumn)
+export const PR_COLUMNS: { value: PrColumn; label: string; hint: string }[] = [
+  { value: 'waiting', label: 'Waiting', hint: 'A draft, or no human has reviewed it yet.' },
+  { value: 'in_review', label: 'In Review', hint: 'A human reviewed it: comments or changes requested.' },
+  { value: 'ready', label: 'Ready to merge', hint: 'A human approved it — merging is my call.' },
+  { value: 'done', label: 'Done', hint: 'Merged or closed today.' },
 ]
 
 type ReviewAuthor = { login?: string; is_bot?: boolean } | null
