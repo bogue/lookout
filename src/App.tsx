@@ -13,6 +13,7 @@ import {
   DEFAULT_PR_BUTTONS,
   DEFAULT_REVIEW_BUTTONS,
   getConfig,
+  getStreamMarks,
   setAnimations,
   setCaptureReviews,
   setLogging,
@@ -22,6 +23,12 @@ import {
   setPrButtons,
   setRepos,
   setReviewButtons,
+  setStreamAutoRun,
+  setStreamEnabled,
+  setStreamNotifiedAt,
+  setStreamSeenAt,
+  setStreamTemplates,
+  setStreamWatchers,
 } from './lib/config'
 import {
   addSessionId,
@@ -43,13 +50,14 @@ import {
   setSeen,
   setSnoozed,
   setStage,
+  streamItems,
   upsertMyPr,
 } from './lib/db'
-import type { TimelineSummary } from './lib/feed'
+import { setStreamFeed, type TimelineSummary } from './lib/feed'
 import { resumeInGhostty } from './lib/ghostty'
 import { logError, logWarn, setLogEnabled } from './lib/log'
 import { snoozeMyPr, syncMyPrs } from './lib/myprs'
-import { onNotificationClick, setNotificationsEnabled } from './lib/notify'
+import { notify, onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
 import { resolveColumn } from './lib/prcolumns'
 import { fillPrompt } from './lib/prompt'
@@ -70,7 +78,19 @@ import {
 } from './lib/runs'
 import { isChatSession, sessionCwd } from './lib/sessions'
 import { advanceStage } from './lib/stages'
+import { streamCardsByRef } from './lib/stream'
+import { digestOf, waitingCount } from './lib/streamdigest'
+import {
+  checkWatching,
+  notifyStream,
+  onStreamChange,
+  rateWaiting,
+  recoverStreamRuns,
+  runWatchers,
+  tickStream,
+} from './lib/streamrunner'
 import { captureRun, syncAll, syncTaskAlerts } from './lib/sync'
+import { TAB_ORDER, tabForKey, type View, visibleTabs } from './lib/tabs'
 import { runCaptureKind } from './lib/transcript'
 import { initTray, setTrayCount, showMainWindow } from './lib/tray'
 import { chatCheckout, pathForBranch } from './lib/worktrees'
@@ -84,26 +104,26 @@ import type {
   PrState,
   ReviewTask,
   Stage,
+  StreamItem,
   WatchedRepo,
 } from './types'
 import { Board } from './views/Board'
 import { Discovery } from './views/Discovery'
 import { PullRequests } from './views/PullRequests'
 import { Settings } from './views/Settings'
+import { Stream } from './views/Stream'
 
 const POLL_MS = 10 * 60 * 1000
 // on tab change we do a lightweight sync of just that tab's data, but not more often than this
 const MIN_PARTIAL_MS = 60 * 1000
-
-type View = 'pulls' | 'discovery' | 'board' | 'settings'
-
-// Single source of truth for tab order: shortcuts (⌘1..⌘n) derive from the index
-const TAB_ORDER: { view: View; label: string }[] = [
-  { view: 'pulls', label: 'Pull Requests' },
-  { view: 'board', label: 'Reviews' },
-  { view: 'discovery', label: 'Discovery' },
-  { view: 'settings', label: 'Settings' },
-]
+// Stream Auto-run heartbeat: changes already tick it, this only catches what slipped past
+const STREAM_TICK_MS = 30 * 1000
+// Stream Watching: how often cards waiting on GitHub are checked against the synced PR state
+const STREAM_WATCH_MS = 60 * 1000
+// Stream notifications come grouped, at most one per this interval
+const STREAM_DIGEST_MS = 15 * 60 * 1000
+// on the Stream tab with the window focused: what's in Needs you counts as seen
+const lookingAtStream = (view: View) => view === 'stream' && document.hasFocus()
 
 const parseFollowupSummary = (text: string) => {
   const m = text.match(/(\d+)\s*addressed\D*?(\d+)\s*partial\D*?(\d+)\s*pending/i)
@@ -124,6 +144,10 @@ const App = () => {
     openInBrowser: false,
     notifications: true,
     mergeMethod: 'merge',
+    streamEnabled: false,
+    streamAutoRun: false,
+    streamTemplates: [],
+    streamWatchers: [],
   })
   const [tasks, setTasks] = useState<ReviewTask[]>([])
   const [myPrs, setMyPrs] = useState<MyPr[]>([])
@@ -234,6 +258,114 @@ const App = () => {
     return () => clearInterval(interval)
   }, [refresh, reload, reloadMyPrs, reloadAlerts])
 
+  // Stream badge + grouped notifications. The badge counts cards in Needs you, live. Being on the
+  // board (window focused) marks them seen; every STREAM_DIGEST_MS one notification names the cards
+  // that reached Needs you since I last looked or was told — none when that's zero.
+  // Stream is a beta behind a Settings flag: off, nothing of it runs, shows or notifies
+  const streamOn = config.streamEnabled
+  const tabs = visibleTabs(streamOn)
+  const [streamAll, setStreamAll] = useState<StreamItem[]>([])
+  const streamWaiting = waitingCount(streamAll)
+  // the live Stream card working on each PR, for the 🌊 chip on its Reviews / Pull Requests card
+  const streamByRef = streamCardsByRef(streamAll)
+  // cards reaching Needs you get their criticality (Haiku, or local rules), whatever tab is open
+  useEffect(() => {
+    if (streamOn) rateWaiting(streamAll).catch((e) => logError('stream', e, 'rate needs you'))
+  }, [streamAll, streamOn])
+  // the PR cards' history shows Stream entries only while Stream is on
+  useEffect(() => setStreamFeed(streamOn), [streamOn])
+  // switched off while on its tab: back to the first one
+  useEffect(() => {
+    if (!streamOn && view === 'stream') setView(TAB_ORDER[0].view)
+  }, [streamOn, view])
+  // a Stream entry clicked in a PR's history: switch to Stream and open that card there
+  const [streamOpen, setStreamOpen] = useState<{ id: string; at: number } | null>(null)
+  const viewRef = useRef(view)
+  viewRef.current = view
+
+  useEffect(() => {
+    if (!streamOn) {
+      setStreamAll([])
+      return
+    }
+    const load = async () => {
+      setStreamAll(await streamItems())
+      if (lookingAtStream(viewRef.current)) await setStreamSeenAt(new Date().toISOString())
+    }
+    const run = () => {
+      load().catch((e) => logError('stream', e, 'count waiting'))
+    }
+    run()
+    window.addEventListener('focus', run)
+    const off = onStreamChange(run)
+    return () => {
+      off()
+      window.removeEventListener('focus', run)
+    }
+  }, [streamOn])
+  useEffect(() => {
+    if (view === 'stream') setStreamSeenAt(new Date().toISOString()).catch(() => null)
+  }, [view])
+  useEffect(() => {
+    if (!streamOn) return
+    const check = async () => {
+      if (lookingAtStream(viewRef.current)) return // I'm already looking at them
+      const digest = digestOf(await streamItems(), await getStreamMarks())
+      if (!digest) return
+      await notify(digest.title, digest.body, { view: 'stream' })
+      await setStreamNotifiedAt(new Date().toISOString())
+    }
+    const interval = setInterval(() => {
+      check().catch((e) => logError('stream', e, 'notification digest'))
+    }, STREAM_DIGEST_MS)
+    return () => clearInterval(interval)
+  }, [streamOn])
+
+  // Stream watchers: each runs on its own interval (dueWatchers); this only asks every minute who is
+  // due. Database reads only — the sync keeps its own pace.
+  const { streamWatchers, streamTemplates } = config
+  useEffect(() => {
+    if (!streamOn || !streamWatchers.some((w) => w.enabled)) return
+    const run = () => {
+      runWatchers(streamWatchers, streamTemplates).catch((e) => logError('stream', e, 'run watchers'))
+    }
+    run()
+    const interval = setInterval(run, STREAM_WATCH_MS)
+    return () => clearInterval(interval)
+  }, [streamOn, streamWatchers, streamTemplates])
+
+  // Stream Watching: cards waiting on GitHub are checked against what the sync stored. Database
+  // reads only, so a short interval costs nothing; the sync itself keeps its own pace.
+  useEffect(() => {
+    if (!streamOn) return
+    const check = () => {
+      checkWatching().catch((e) => logError('stream', e, 'check watching'))
+    }
+    check()
+    const interval = setInterval(check, STREAM_WATCH_MS)
+    return () => clearInterval(interval)
+  }, [streamOn])
+
+  // Stream: a run can't outlive the app — cards left "running" are marked interrupted
+  useEffect(() => {
+    if (streamOn) recoverStreamRuns().catch((e) => logError('stream', e, 'recover runs'))
+  }, [streamOn])
+
+  // Stream Auto-run: start queued cards whenever something changes (a card added, a run ended), plus
+  // a slow heartbeat for anything missed. Off = nothing is scheduled at all.
+  const { streamAutoRun, repos: watchedRepos } = config
+  useEffect(() => {
+    if (!streamOn || !streamAutoRun) return
+    const tick = () => tickStream(watchedRepos)
+    tick()
+    const off = onStreamChange(tick)
+    const interval = setInterval(tick, STREAM_TICK_MS)
+    return () => {
+      off()
+      clearInterval(interval)
+    }
+  }, [streamOn, streamAutoRun, watchedRepos])
+
   // The `lookout` CLI pings the app's socket after it writes, so a card moved from a terminal shows
   // up at once instead of at the next sync. The event is only a hint that something changed —
   // reload() reads the database for the truth, so a missed or malformed ping costs nothing.
@@ -241,6 +373,7 @@ const App = () => {
     const sub = listen('cards:changed', () => {
       reload()
       reloadAlerts()
+      notifyStream() // a `lookout stream …` write: the board, its badge and Auto-run catch up
     }).catch(() => null)
     return () => {
       sub.then((un) => un?.())
@@ -249,11 +382,13 @@ const App = () => {
 
   // OS notification click: mark read + open the card panel
   useEffect(() => {
-    const listener = onNotificationClick(async ({ alertKey, taskId }) => {
+    const listener = onNotificationClick(async ({ alertKey, taskId, view: tab }) => {
       if (alertKey) await markAlertRead(alertKey)
       await reloadAlerts()
       await showMainWindow()
-      if (taskId) {
+      if (tab === 'stream') {
+        if (streamOn) setView('stream')
+      } else if (taskId) {
         setView('board')
         setPanelTaskId(taskId)
       }
@@ -261,20 +396,20 @@ const App = () => {
     return () => {
       listener.then((un) => un?.())
     }
-  }, [reloadAlerts])
+  }, [reloadAlerts, streamOn])
 
-  // ⌘1..⌘n switch tabs, indexes follow TAB_ORDER
+  // ⌘1..⌘n switch tabs, indexes follow the visible tabs
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const idx = Number(e.key) - 1
-      if (e.metaKey && !e.shiftKey && !e.altKey && TAB_ORDER[idx]) {
+      const v = tabForKey(e.key, visibleTabs(streamOn))
+      if (e.metaKey && !e.shiftKey && !e.altKey && v) {
         e.preventDefault()
-        switchView(TAB_ORDER[idx].view)
+        switchView(v)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [switchView])
+  }, [switchView, streamOn])
 
   const moveStage = async (id: string, stage: Stage) => {
     await setStage(id, stage)
@@ -560,6 +695,7 @@ const App = () => {
   const badges: Partial<Record<View, number>> = {
     board: tasks.filter((t) => alertedIds.has(t.id)).length,
     pulls: myPrs.filter((p) => alertedIds.has(p.id)).length,
+    stream: streamWaiting, // cards in Needs you, live
   }
 
   // clicking a card is reading its notifications
@@ -581,7 +717,7 @@ const App = () => {
       >
         {label}
         {badge ? (
-          <Tip label="Unread notifications on this board">
+          <Tip label={v === 'stream' ? 'Cards waiting for you in Needs you' : 'Unread notifications on this board'}>
             <span
               className={`ml-1.5 rounded-full px-1.5 text-xs ${v === 'discovery' ? 'bg-deck-700 text-deck-300' : 'bg-amber-500 text-black'}`}
             >
@@ -621,20 +757,18 @@ const App = () => {
             </button>
           </Tip>
         </h1>
-        {TAB_ORDER.filter((t) => t.view !== 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
-        {/* drag region only fires on the element itself, so the wrapper needs it too:
-            clicks on the search input/buttons inside still behave normally */}
-        <div data-tauri-drag-region className="flex min-w-0 flex-1 justify-center px-4">
-          <GlobalSearch
-            tasks={tasks}
-            onOpen={openCard}
-            onReview={startReview}
-            onWatch={(id) => moveStage(id, 'watching')}
-            onIgnore={(id) => moveStage(id, 'ignored')}
-            onUnignore={(id) => moveStage(id, 'discovered')}
-          />
-        </div>
-        {TAB_ORDER.filter((t) => t.view === 'settings').map((t) => tab(t, TAB_ORDER.indexOf(t)))}
+        {tabs.filter((t) => t.view !== 'settings').map((t) => tab(t, tabs.indexOf(t)))}
+        {/* empty space between the tabs and the right-hand icons: still part of the titlebar drag region */}
+        <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        {tabs.filter((t) => t.view === 'settings').map((t) => tab(t, tabs.indexOf(t)))}
+        <GlobalSearch
+          tasks={tasks}
+          onOpen={openCard}
+          onReview={startReview}
+          onWatch={(id) => moveStage(id, 'watching')}
+          onIgnore={(id) => moveStage(id, 'ignored')}
+          onUnignore={(id) => moveStage(id, 'discovered')}
+        />
         <NotificationBell
           alerts={alerts}
           onOpen={openAlert}
@@ -653,27 +787,31 @@ const App = () => {
         />
       </header>
 
-      {/* status bar: above the board, but under the card side panel (z-20) */}
-      <div className="fixed bottom-2 right-2 z-10 flex items-center gap-2 rounded-md border border-deck-700 bg-deck-900/95 px-2 py-1 text-xs text-deck-500 shadow-lg">
-        {lastSync && <span>synced {lastSync.toLocaleTimeString()}</span>}
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={syncing}
-          className="cursor-pointer rounded bg-deck-800 px-2 py-0.5 text-deck-300 hover:bg-deck-700 disabled:opacity-50"
-        >
-          {syncing ? 'syncing…' : 'sync now'}
-        </button>
-      </div>
+      {/* status bar: above the board, but under the card side panel (z-20). Not on Stream: nothing
+          there comes from the GitHub sync */}
+      {view !== 'stream' && (
+        <div className="fixed bottom-2 right-2 z-10 flex items-center gap-2 rounded-md border border-deck-700 bg-deck-900/95 px-2 py-1 text-xs text-deck-500 shadow-lg">
+          {lastSync && <span>synced {lastSync.toLocaleTimeString()}</span>}
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={syncing}
+            className="cursor-pointer rounded bg-deck-800 px-2 py-0.5 text-deck-300 hover:bg-deck-700 disabled:opacity-50"
+          >
+            {syncing ? 'syncing…' : 'sync now'}
+          </button>
+        </div>
+      )}
 
       {error && <div className="mx-4 mt-3 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-300">{error}</div>}
 
       {/* board: columns scroll individually and stop 50px above the bottom (sync pill stays clear) */}
       <main
-        className={`flex-1 p-4 ${view === 'board' || view === 'pulls' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
+        className={`flex-1 p-4 ${view === 'stream' ? 'overflow-hidden' : view === 'board' || view === 'pulls' || view === 'discovery' ? 'overflow-hidden pb-[50px]' : 'overflow-y-auto'}`}
       >
         {view === 'pulls' && (
           <PullRequests
+            streamByRef={streamByRef}
             prs={myPrs}
             me={config.githubUser}
             runs={runs}
@@ -686,6 +824,24 @@ const App = () => {
             onDismissNew={(pr) => markCardRead(pr.id)}
             onReorder={reorderMyPr}
             menuFor={(pr) => cardMenu(myPrToTask(pr), 'pr')}
+          />
+        )}
+        {streamOn && view === 'stream' && (
+          <Stream
+            repos={config.repos}
+            autoRun={config.streamAutoRun}
+            openRequest={streamOpen}
+            templates={config.streamTemplates}
+            onManageTemplates={() => setView('settings')}
+            watchers={config.streamWatchers}
+            onSaveWatchers={async (watchers) => {
+              await setStreamWatchers(watchers)
+              setConfig(await getConfig())
+            }}
+            onAutoRun={async (on) => {
+              await setStreamAutoRun(on)
+              setConfig(await getConfig())
+            }}
           />
         )}
         {view === 'discovery' && (
@@ -704,6 +860,7 @@ const App = () => {
         )}
         {view === 'board' && (
           <Board
+            streamByRef={streamByRef}
             tasks={tasks}
             runs={runs}
             menuFor={(t) => cardMenu(t, 'review')}
@@ -768,12 +925,25 @@ const App = () => {
               await setMergeMethod(m)
               setConfig(await getConfig())
             }}
+            onSaveStreamEnabled={async (on) => {
+              await setStreamEnabled(on)
+              setConfig(await getConfig())
+            }}
+            onSaveStreamTemplates={async (templates) => {
+              await setStreamTemplates(templates)
+              setConfig(await getConfig())
+            }}
           />
         )}
       </main>
 
       {panelTask && (
         <SessionPanel
+          onOpenStream={(id) => {
+            setPanelTaskId(null)
+            setView('stream')
+            setStreamOpen({ id, at: Date.now() })
+          }}
           task={panelTask}
           run={getRun(panelTask.id)}
           me={config.githubUser}

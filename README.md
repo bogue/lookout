@@ -134,6 +134,11 @@ lookout mine list --column ready           # my PRs that are approved and just n
 lookout mine show                          # my PR for this repo + branch
 lookout mine ready                         # → Ready to merge
 
+lookout stream add "#app implement card 1,2"   # dump work onto the Stream board (--queue for Queued)
+lookout stream list --status needs_review      # what waits on me
+lookout stream gate --summary "Plan ready"     # an agent stops for my review (--kind question to ask)
+lookout stream note "tests are slow here"      # a line in the item's trail
+
 lookout doctor                             # database path and both board counts
 ```
 

@@ -1,3 +1,7 @@
+import type { FlowTemplate, TemplateStep } from './lib/streamflow'
+import type { WaitFor } from './lib/streamwatch'
+import type { Watcher } from './lib/streamwatchers'
+
 export type Stage =
   | 'discovered'
   | 'watching'
@@ -162,4 +166,70 @@ export type Config = {
   openInBrowser: boolean // links open in the default browser instead of the in-app window (prwindow.ts)
   notifications: boolean // OS notifications for new alerts; the OS permission is asked when it's switched on
   mergeMethod: MergePreference // the Merge button's default strategy, when the repo allows it
+  streamEnabled: boolean // Stream beta (Settings): off = no tab, nothing scheduled, no chips on PR cards
+  streamAutoRun: boolean // Stream: agents pick queued cards on their own (off = only Run now starts one)
+  streamTemplates: FlowTemplate[] // Stream flow templates (Settings → Stream)
+  streamWatchers: Watcher[] // Stream watchers: rules that create cards (Settings → Stream)
+}
+
+// Stream: things I dumped for Lookout's agents to work through (src/lib/stream.ts).
+//  idea/shaping             Inbox — not queued yet (shaping = an agent is asking me questions)
+//  queued/paused            Queued — waiting for a free slot, top first
+//  running/watching         Active — an agent is on it, or it waits on GitHub
+//  needs_review/question/   Needs you — my approval, an answer, or a retry
+//  failed/interrupted
+//  done/skipped             Done
+export type StreamStatus =
+  | 'idea'
+  | 'shaping'
+  | 'queued'
+  | 'paused'
+  | 'running'
+  | 'watching'
+  | 'needs_review'
+  | 'question'
+  | 'failed'
+  | 'interrupted'
+  | 'done'
+  | 'skipped'
+
+export type StreamColumn = 'inbox' | 'queued' | 'active' | 'needs_you' | 'done'
+
+export type StreamPriority = 'urgent' | 'high' | 'normal' | 'low'
+
+export type StreamItem = {
+  id: string
+  repo: string // owner/repo — the project the item works in; '' while it isn't known yet
+  groupId: string | null // items sharing one branch/worktree ("in one branch")
+  title: string
+  body: string | null // notes; the dump line itself is the title
+  refKind: 'pr' | 'url' | null
+  ref: string | null // owner/repo#2, or a Notion/Jira/any URL
+  status: StreamStatus
+  gate: string | null // what a Needs you item waits on, e.g. project:<status> ("which project?")
+  sortOrder: number | null // manual rank within its column; null = the column's default order
+  priority: StreamPriority | null // Needs you criticality (Haiku, or set by me)
+  priorityReason: string | null
+  prioritySource: 'haiku' | 'me' | null
+  branch: string | null // the branch its agent works on, once a run prepared it
+  checkout: string | null // the worktree path its runs use
+  sessionIds: string[] // Claude sessions run for it, oldest first
+  waitFor: WaitFor | null // Watching: what on GitHub it waits for (streamwatch.ts)
+  steps: TemplateStep[] // its flow's steps (streamflow.ts); none = a one-step card
+  stepIndex: number // the step it is on
+  templateId: string | null // the flow template it came from
+  guidelines: string | null // the template's rules, appended to every step
+  createdBy: string // me | cli | watcher:<id>
+  createdAt: string
+  updatedAt: string
+}
+
+// the audit trail of an item: who did what, shown as its feed
+export type StreamEvent = {
+  id: number
+  itemId: string
+  ts: string
+  actor: string // me | lookout | github | cli | watcher:<id>
+  kind: string // created | status | edited | priority | …
+  text: string | null
 }

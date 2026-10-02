@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { DatabaseSync } from 'node:sqlite'
 import { type MyPrRow, rowToMyPr } from '../lib/myprrow'
 import { advanceColumn } from '../lib/prcolumns'
 import { advanceStage } from '../lib/stages'
+import type { DumpItem } from '../lib/stream'
+import { rowToStreamItem, type StreamItemRow } from '../lib/streamrow'
 import { stageUpdate, type TaskRow, toTask } from '../lib/taskrow'
-import type { MyPr, PrColumn, ReviewTask, Stage } from '../types'
+import type { MyPr, PrColumn, ReviewTask, Stage, StreamItem, StreamStatus } from '../types'
 import { resolveDbPath } from './paths'
 
 // Required at call time, not imported: a static `node:sqlite` import is hoisted above everything,
@@ -31,6 +34,11 @@ export type Db = {
   saveCapturedReview: (r: CapturedReviewInput) => void
   deleteCapturedReview: (id: string) => void
   clearCapturedReviews: (before: string | null) => number
+  // the Stream board (`stream_items`, migration 022)
+  streamItems: (filter?: { status?: StreamStatus; repo?: string }) => StreamItem[]
+  addStreamItems: (items: DumpItem[], status: 'idea' | 'queued') => string[]
+  streamGate: (id: string, kind: 'result' | 'question', text: string) => 'held' | 'stopped' | false
+  streamNote: (id: string, text: string) => void
   close: () => void
 }
 
@@ -81,6 +89,20 @@ export const openDb = (path = resolveDbPath(), readOnly = false): Db => {
     if (!hasTable('captured_reviews') || !hasColumn('captured_reviews', 'kind')) {
       throw new NoDatabaseError(`${path} is from an older Lookout — start this version of the app once to migrate`)
     }
+  }
+
+  // the Stream board arrived in migration 022
+  const requireStream = () => {
+    if (!hasTable('stream_items')) {
+      throw new NoDatabaseError(`${path} has no Stream board yet — start this version of the app once to migrate`)
+    }
+  }
+
+  // every CLI write to an item lands in its trail, signed `cli`
+  const logStream = (itemId: string, kind: string, text: string | null) => {
+    handle
+      .prepare('INSERT INTO stream_events (item_id, ts, actor, kind, text) VALUES (?, ?, ?, ?, ?)')
+      .run(itemId, new Date().toISOString(), 'cli', kind, text)
   }
 
   const rowsToTasks = (rows: unknown[]): ReviewTask[] => rows.map((r) => toTask(r as TaskRow))
@@ -219,6 +241,68 @@ export const openDb = (path = resolveDbPath(), readOnly = false): Db => {
         .prepare('UPDATE my_prs SET board_column = ?, updated_at = ? WHERE id = ?')
         .run(to, new Date().toISOString(), id)
       return { from: current.column, to, changed: true }
+    },
+    streamItems: (filter = {}) => {
+      requireStream()
+      const where: string[] = []
+      const args: string[] = []
+      if (filter.status) {
+        where.push('status = ?')
+        args.push(filter.status)
+      }
+      if (filter.repo) {
+        where.push('repo = ?')
+        args.push(filter.repo)
+      }
+      const sql = `SELECT * FROM stream_items${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at`
+      return handle
+        .prepare(sql)
+        .all(...args)
+        .map((r) => rowToStreamItem(r as StreamItemRow))
+    },
+    // Same shape as the app's addStreamItems (src/lib/db.ts): repo '' when nothing named the project,
+    // so the app's Haiku placement picks it up; created_at a millisecond apart to keep dump order.
+    addStreamItems: (items, status) => {
+      requireStream()
+      const base = Date.now()
+      return items.map((it, i) => {
+        const id = randomUUID()
+        const at = new Date(base + i).toISOString()
+        handle
+          .prepare(
+            `INSERT INTO stream_items (id, repo, title, ref_kind, ref, status, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'cli', ?, ?)`,
+          )
+          .run(id, it.repo ?? '', it.title, it.refKind, it.ref, status, at, at)
+        logStream(id, 'created', status === 'queued' ? 'added from the CLI straight into Queued' : 'added from the CLI')
+        return id
+      })
+    },
+    // An agent stopping on purpose: a result for my review, or a question. Nothing finished moves.
+    // A running card is only held: its agent is still on, and the app writes the stop when the agent's
+    // final answer lands (src/lib/db.ts streamRunResult reads the held gate). Moving it now would lose
+    // that answer, and leave a reply racing a live process. Any other live card stops right away.
+    streamGate: (id, kind, text) => {
+      requireStream()
+      const held = handle.prepare("UPDATE stream_items SET gate = ? WHERE id = ? AND status = 'running'").run(kind, id)
+      if (Number(held.changes)) {
+        logStream(id, kind === 'question' ? 'question' : 'note', text)
+        return 'held'
+      }
+      const status = kind === 'question' ? 'question' : 'needs_review'
+      const res = handle
+        .prepare(
+          `UPDATE stream_items SET status = ?, gate = ?, sort_order = NULL, updated_at = ?
+           WHERE id = ? AND status NOT IN ('done', 'skipped')`,
+        )
+        .run(status, kind, new Date().toISOString(), id)
+      if (!Number(res.changes)) return false
+      logStream(id, kind, text)
+      return 'stopped'
+    },
+    streamNote: (id, text) => {
+      requireStream()
+      logStream(id, 'note', text)
     },
     close: () => handle.close(),
   }

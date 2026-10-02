@@ -21,6 +21,7 @@ import {
   RepoPushIcon,
   StopIcon,
   SyncIcon,
+  WorkflowIcon,
   XCircleIcon,
 } from '@primer/octicons-react'
 import type { IconName } from '../lib/icons'
@@ -47,6 +48,7 @@ const OCTICONS: Record<IconName, OcticonType> = {
   'repo-push': RepoPushIcon,
   stop: StopIcon,
   sync: SyncIcon,
+  workflow: WorkflowIcon,
   'x-circle': XCircleIcon,
 }
 

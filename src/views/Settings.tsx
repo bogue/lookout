@@ -11,6 +11,7 @@ import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
 import { SidePanel } from '../components/SidePanel'
+import { StreamTemplates } from '../components/StreamTemplates'
 import { Tip } from '../components/Tip'
 import { dropAction } from '../lib/actionlist'
 import { avatarUrl } from '../lib/avatar'
@@ -29,6 +30,7 @@ import {
   openNotificationSettings,
   requestNotifications,
 } from '../lib/notify'
+import type { FlowTemplate } from '../lib/streamflow'
 import type { ActionButton, ButtonBoard, Config, MergePreference, ReviewTask, WatchedRepo } from '../types'
 import { History } from './History'
 
@@ -44,6 +46,8 @@ type Props = {
   onSaveOpenInBrowser: (on: boolean) => void
   onSaveNotifications: (on: boolean) => void
   onSaveMergeMethod: (m: MergePreference) => void
+  onSaveStreamTemplates: (templates: FlowTemplate[]) => void
+  onSaveStreamEnabled: (on: boolean) => void
 }
 
 // What to paste into ~/.claude/settings.json for instant capture. Lookout does not write that file
@@ -305,6 +309,8 @@ export const Settings = ({
   onSaveOpenInBrowser,
   onSaveNotifications,
   onSaveMergeMethod,
+  onSaveStreamTemplates,
+  onSaveStreamEnabled,
 }: Props) => {
   const [editing, setEditing] = useState<{ board: ButtonBoard; id: string } | null>(null) // the one action open in the side panel
   const [confirm, setConfirm] = useState<Confirm | null>(null) // a destructive change waiting for a yes
@@ -540,6 +546,24 @@ export const Settings = ({
       {list('review')}
 
       {list('pr')}
+
+      {config.streamEnabled && <StreamTemplates templates={config.streamTemplates} onSave={onSaveStreamTemplates} />}
+
+      <div className="flex flex-col gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-deck-200">Beta</h3>
+          <p className="mt-0.5 text-xs text-deck-500">Features still under development: they may change or break.</p>
+        </div>
+        <div className="flex flex-col divide-y divide-deck-800 rounded-lg border border-deck-700">
+          <ToggleRow
+            bare
+            label="Stream"
+            hint="A board where you dump work for Claude agents: they run it in their own worktrees, and stop for your review. Off: no Stream tab, nothing runs in the background, no 🌊 on PR cards — your cards are kept."
+            on={config.streamEnabled}
+            onToggle={() => onSaveStreamEnabled(!config.streamEnabled)}
+          />
+        </div>
+      </div>
 
       <div className="flex flex-col gap-3">
         <div>

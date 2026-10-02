@@ -1,8 +1,25 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Alert, AlertKind, CapturedReview, CiChecks, MyPr, PrColumn, ReviewTask, Stage } from '../types'
+import type {
+  Alert,
+  AlertKind,
+  CapturedReview,
+  CiChecks,
+  MyPr,
+  PrColumn,
+  ReviewTask,
+  Stage,
+  StreamEvent,
+  StreamItem,
+  StreamPriority,
+  StreamStatus,
+} from '../types'
 import { type AlertScope, inScope } from './alerts'
 import { logError } from './log'
 import { type MyPrRow, rowToMyPr } from './myprrow'
+import { columnOf, type DumpItem, dumpRef, projectGate, projectGateTarget } from './stream'
+import type { FlowTemplate } from './streamflow'
+import { rowToStreamEvent, rowToStreamItem, type StreamEventRow, type StreamItemRow } from './streamrow'
+import type { WaitFor } from './streamwatch'
 import { stageUpdate, type TaskRow, toTask } from './taskrow'
 
 let db: Database | null = null
@@ -461,4 +478,453 @@ export const clearCapturedReviews = async () => {
 export const pruneCapturedReviews = async (before: string) => {
   const d = await getDb()
   await d.execute('DELETE FROM captured_reviews WHERE created_at < $1', [before])
+}
+
+// ── Stream board (migration 022). An item is my own record: no sync touches these tables. ──
+
+const logStreamEvent = async (d: Database, itemId: string, kind: string, text: string | null, actor = 'me') =>
+  d.execute('INSERT INTO stream_events (item_id, ts, actor, kind, text) VALUES ($1, $2, $3, $4, $5)', [
+    itemId,
+    new Date().toISOString(),
+    actor,
+    kind,
+    text,
+  ])
+
+export const streamItems = async (): Promise<StreamItem[]> => {
+  const d = await getDb()
+  const rows = await d.select<StreamItemRow[]>('SELECT * FROM stream_items ORDER BY created_at')
+  return rows.map(rowToStreamItem)
+}
+
+export const streamEvents = async (itemId: string): Promise<StreamEvent[]> => {
+  const d = await getDb()
+  const rows = await d.select<StreamEventRow[]>('SELECT * FROM stream_events WHERE item_id = $1 ORDER BY id', [itemId])
+  return rows.map(rowToStreamEvent)
+}
+
+// A dump's items, in dump order: created_at is spaced by a millisecond so "oldest first" in Queued
+// keeps the order I typed them in even though they land in the same instant.
+// An item with no project yet is stored with repo '' until Haiku (or I) name one.
+// `origin` says where the items came from in their trail (a shaped idea), else the dump
+export const addStreamItems = async (
+  // createdBy: who made it (a watcher signs `watcher:<id>`); dedupeKey: a watcher's event key;
+  // gate: a starting marker (a watcher's card skips its flow's first wait — the event already happened)
+  items: (DumpItem & { body?: string | null; createdBy?: string; dedupeKey?: string; gate?: string })[],
+  status: StreamStatus,
+  origin?: string,
+  template?: FlowTemplate, // its steps and guidelines are copied onto each card: editing it later changes no card
+) => {
+  const d = await getDb()
+  const base = Date.now()
+  for (const [i, it] of items.entries()) {
+    const id = crypto.randomUUID()
+    const at = new Date(base + i).toISOString()
+    await d.execute(
+      `INSERT INTO stream_items (id, repo, title, body, ref_kind, ref, status, template_id, steps, guidelines,
+         created_by, dedupe_key, gate, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
+      [
+        id,
+        it.repo ?? '',
+        it.title,
+        it.body ?? null,
+        it.refKind,
+        it.ref,
+        status,
+        template?.id ?? null,
+        JSON.stringify(template?.steps ?? []),
+        template?.guidelines || null,
+        it.createdBy ?? 'me',
+        it.dedupeKey ?? null,
+        it.gate ?? null,
+        at,
+      ],
+    )
+    const made = origin ?? (status === 'queued' ? 'dumped straight into Queued' : null)
+    await logStreamEvent(
+      d,
+      id,
+      'created',
+      template ? `${made ? `${made} · ` : ''}flow: ${template.name}` : made,
+      it.createdBy ?? 'me',
+    )
+  }
+}
+
+// Every card a watcher made, by its dedupe key: an event already turned into a card is never turned
+// into another, and a PR with a live card from the same watcher waits for that one to finish.
+export const watcherCards = async (): Promise<{ key: string; title: string; live: boolean }[]> => {
+  const d = await getDb()
+  const rows = await d.select<{ dedupe_key: string; title: string; status: string }[]>(
+    'SELECT dedupe_key, title, status FROM stream_items WHERE dedupe_key IS NOT NULL ORDER BY created_at',
+  )
+  return rows.map((r) => ({ key: r.dedupe_key, title: r.title, live: r.status !== 'done' && r.status !== 'skipped' }))
+}
+
+// Name an item's project (Haiku's guess, or my pick). A bare #2 in the title now names a PR. An item
+// that was asking "which project?" goes on to where it was headed when I dumped it.
+export const setStreamProject = async (item: StreamItem, repo: string, actor: 'me' | 'lookout') => {
+  const d = await getDb()
+  const ref = item.ref ? { refKind: item.refKind, ref: item.ref } : dumpRef(item.title, repo)
+  const target = projectGateTarget(item.gate)
+  if (target)
+    await d.execute(
+      'UPDATE stream_items SET repo = $1, ref_kind = $2, ref = $3, status = $4, gate = NULL, sort_order = NULL, updated_at = $5 WHERE id = $6',
+      [repo, ref.refKind, ref.ref, target, new Date().toISOString(), item.id],
+    )
+  else
+    await d.execute('UPDATE stream_items SET repo = $1, ref_kind = $2, ref = $3 WHERE id = $4', [
+      repo,
+      ref.refKind,
+      ref.ref,
+      item.id,
+    ])
+  await logStreamEvent(d, item.id, 'project', actor === 'lookout' ? `${repo} (guessed by Haiku)` : repo, actor)
+}
+
+// Haiku couldn't tell the project: the item waits in Needs you, remembering where it was headed
+export const askStreamProject = async (item: StreamItem) => {
+  const d = await getDb()
+  await d.execute('UPDATE stream_items SET status = $1, gate = $2, sort_order = NULL, updated_at = $3 WHERE id = $4', [
+    'question',
+    projectGate(item.status),
+    new Date().toISOString(),
+    item.id,
+  ])
+  await logStreamEvent(d, item.id, 'question', 'Which project? Haiku could not tell from the text', 'lookout')
+}
+
+// ── Stream runs: an agent working an item. Every write logs who did it. ──
+
+const now = () => new Date().toISOString()
+
+export const streamItem = async (id: string): Promise<StreamItem | null> => {
+  const d = await getDb()
+  const rows = await d.select<StreamItemRow[]>('SELECT * FROM stream_items WHERE id = $1', [id])
+  return rows[0] ? rowToStreamItem(rows[0]) : null
+}
+
+// Claimed for a run before its worktree exists, so a second scheduler tick can't pick it again.
+// The rank goes: Active has no manual order.
+// False when it was already running: someone else (a tick, a double click) got there first. The
+// gate and the watch stay: they say which step to start and why, and are only cleared once the
+// agent really started (markStreamStarted) — a worktree that can't be prepared mustn't lose them.
+export const claimStreamRun = async (id: string, text: string, actor: 'me' | 'lookout'): Promise<boolean> => {
+  const d = await getDb()
+  const res = await d.execute(
+    // a Haiku rating belongs to one visit to Needs you: leaving it clears that (mine stays)
+    `UPDATE stream_items SET status = 'running', sort_order = NULL, updated_at = $1,
+       priority = CASE WHEN priority_source = 'me' THEN priority ELSE NULL END,
+       priority_reason = CASE WHEN priority_source = 'me' THEN priority_reason ELSE NULL END,
+       priority_source = CASE WHEN priority_source = 'me' THEN 'me' ELSE NULL END
+     WHERE id = $2 AND status <> 'running'`,
+    [now(), id],
+  )
+  if (!res.rowsAffected) return false
+  await logStreamEvent(d, id, 'started', text, actor)
+  return true
+}
+
+// What a dispatch sent the agent, word for word (my replies are logged as `reply` already): the
+// thread hides it, Retry re-sends it when the turn died before answering (streamrun.ts unanswered).
+export const logStreamSent = async (id: string, text: string) => {
+  const d = await getDb()
+  await logStreamEvent(d, id, 'sent', text, 'lookout')
+}
+
+// Retry in a new session: the old one is left behind (its transcript stays on disk)
+export const clearStreamSessions = async (id: string) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET session_ids = '[]' WHERE id = $1", [id])
+}
+
+// the agent is running with its step's prompt: what it waited for and which step to start are spent
+export const markStreamStarted = async (id: string) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET gate = NULL, wait_for = NULL WHERE id = $1 AND status = 'running'", [id])
+}
+
+// A session only resumes in the directory it ran in: a new checkout starts the session list over.
+export const setStreamCheckout = async (id: string, branch: string, checkout: string) => {
+  const d = await getDb()
+  await d.execute(
+    "UPDATE stream_items SET session_ids = CASE WHEN checkout IS $2 THEN session_ids ELSE '[]' END, branch = $1, checkout = $2 WHERE id = $3",
+    [branch, checkout, id],
+  )
+}
+
+export const addStreamSession = async (id: string, sessionId: string) => {
+  const d = await getDb()
+  const item = await streamItem(id)
+  if (!item || item.sessionIds.includes(sessionId)) return
+  await d.execute('UPDATE stream_items SET session_ids = $1 WHERE id = $2', [
+    JSON.stringify([...item.sessionIds, sessionId]),
+    id,
+  ])
+}
+
+// the agent answered: its final turn is the summary I review (the result gate)
+// Only a running item moves: if I skipped or finished it meanwhile, my move stands.
+export const streamRunResult = async (id: string, text: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    // the agent asked a question mid-run (`lookout stream gate --kind question`): that's what waits on me
+    `UPDATE stream_items SET
+       status = CASE WHEN gate = 'question' THEN 'question' ELSE 'needs_review' END,
+       gate = CASE WHEN gate = 'question' THEN 'question' ELSE 'result' END,
+       sort_order = NULL, updated_at = $1
+     WHERE id = $2 AND status = 'running'`,
+    [now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, 'result', text, 'lookout')
+}
+
+// A shaping turn answered (streamshape.ts): a proposal waits for my go (Needs you, review), questions
+// wait for my answers. Gate `shape` keeps the replies in the read-only shaping session.
+export const streamShapeResult = async (id: string, text: string, proposal: string | null) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = $1, gate = 'shape', sort_order = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+    [proposal ? 'needs_review' : 'question', now(), id],
+  )
+  if (!res.rowsAffected) return
+  await logStreamEvent(d, id, 'result', text, 'lookout')
+  if (proposal) await logStreamEvent(d, id, 'proposal', proposal, 'lookout')
+}
+
+// I took the proposal: the idea became its cards, and is done
+// Only once: a second click on the proposal finds the idea already done, and creates nothing.
+export const finishShaping = async (id: string, created: number): Promise<boolean> => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'done', gate = NULL, updated_at = $1 WHERE id = $2 AND status = 'needs_review'",
+    [now(), id],
+  )
+  if (!res.rowsAffected) return false
+  await logStreamEvent(d, id, 'shaped', `became ${created} card${created === 1 ? '' : 's'}`, 'me')
+  return true
+}
+
+// The process ended without an answer. Only an item still running moves: a result already sent it on.
+export const streamRunEnded = async (id: string, status: 'failed' | 'interrupted', text: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = $1, sort_order = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+    [status, now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, status, text, 'lookout')
+}
+
+// my reply into the item's session (a note on a rejected result, an answer, "push it now")
+export const logStreamReply = async (id: string, text: string) => {
+  const d = await getDb()
+  await logStreamEvent(d, id, 'reply', text, 'me')
+}
+
+// The trail of every Stream card about one PR (ref owner/repo#n), for that PR's own history on the
+// Reviews / Pull Requests boards. Only the milestones; the rest stays in the Stream thread.
+export const streamEventsForRef = async (
+  ref: string,
+): Promise<(StreamEvent & { itemTitle: string; itemStatus: StreamStatus })[]> => {
+  const d = await getDb()
+  const rows = await d.select<(StreamEventRow & { item_title: string; item_status: string })[]>(
+    `SELECT e.*, i.title AS item_title, i.status AS item_status FROM stream_events e
+     JOIN stream_items i ON i.id = e.item_id
+     WHERE i.ref = $1 AND e.kind IN ('created', 'started', 'result', 'watching', 'triggered', 'failed', 'status')
+     ORDER BY e.id`,
+    [ref],
+  )
+  return rows.map((r) => ({
+    ...rowToStreamEvent(r),
+    itemTitle: r.item_title,
+    itemStatus: r.item_status as StreamStatus,
+  }))
+}
+
+// A flow moves to its next step: back to Queued (gate `step`: the next run starts that step), or
+// watching GitHub first when the step says so. The session and worktree carry over.
+// Guarded on the step it advances from and a status that waits on me: a double click, or my Approve
+// racing the automatic one of an ungated step, moves it once.
+export const advanceStreamStep = async (
+  id: string,
+  from: number,
+  index: number,
+  label: string,
+  w: WaitFor | null,
+): Promise<boolean> => {
+  const d = await getDb()
+  const res = await d.execute(
+    `UPDATE stream_items SET status = $1, gate = 'step', wait_for = $2, step_index = $3, sort_order = NULL, updated_at = $4
+     WHERE id = $5 AND step_index = $6 AND status IN ('needs_review', 'question', 'failed', 'interrupted')`,
+    [w ? 'watching' : 'queued', w ? JSON.stringify(w) : null, index, now(), id, from],
+  )
+  if (!res.rowsAffected) return false
+  await logStreamEvent(d, id, 'step', label, 'lookout')
+  return true
+}
+
+// Stop watching. A flow waiting before its next step goes on with that step now (gate step-now:
+// don't wait again); any other watch hands the card back to me.
+export const unwatchStreamItem = async (item: StreamItem) => {
+  const d = await getDb()
+  const flowWait = item.gate === 'step'
+  const res = await d.execute(
+    `UPDATE stream_items SET status = $1, gate = $2, wait_for = NULL, sort_order = NULL, updated_at = $3
+     WHERE id = $4 AND status = 'watching'`,
+    [flowWait ? 'queued' : 'needs_review', flowWait ? 'step-now' : null, now(), item.id],
+  )
+  if (res.rowsAffected)
+    await logStreamEvent(d, item.id, 'status', flowWait ? 'stopped waiting: next step queued' : 'stopped watching')
+}
+
+// a ci_green watch saw CI leave green: the next green is the one it waits for
+export const armStreamWatch = async (id: string, w: WaitFor) => {
+  const d = await getDb()
+  await d.execute("UPDATE stream_items SET wait_for = $1 WHERE id = $2 AND status = 'watching'", [
+    JSON.stringify({ ...w, armed: true }),
+    id,
+  ])
+}
+
+// Every alert the sync derived, archived ones included: archiving an alert in the bell must not
+// stop the Stream card waiting on that event from waking up.
+export const watchAlerts = async (): Promise<{ key: string; kind: string; taskId: string; createdAt: string }[]> => {
+  const d = await getDb()
+  const rows = await d.select<{ key: string; kind: string; task_id: string; created_at: string }[]>(
+    'SELECT key, kind, task_id, created_at FROM alerts',
+  )
+  return rows.map((r) => ({ key: r.key, kind: r.kind, taskId: r.task_id, createdAt: r.created_at }))
+}
+
+// Watching: the card waits on GitHub. It keeps its session and worktree; the watch says what to tell
+// the agent when it fires (streamwatch.ts).
+// gate 'step': a flow waiting before a step (its resume text is that step); null: a plain watch
+export const watchStreamItem = async (
+  id: string,
+  w: WaitFor,
+  label: string,
+  actor: 'me' | 'lookout',
+  gate: 'step' | null = null,
+) => {
+  const d = await getDb()
+  await d.execute(
+    "UPDATE stream_items SET status = 'watching', gate = $1, wait_for = $2, sort_order = NULL, updated_at = $3 WHERE id = $4",
+    [gate, JSON.stringify(w), now(), id],
+  )
+  await logStreamEvent(d, id, 'watching', label, actor)
+}
+
+// It happened on GitHub: back to Queued, where Auto-run (or Run now) resumes it with the watch's
+// message. Only a card still watching moves — Stop watching won.
+export const fireStreamWatch = async (id: string, text: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'queued', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'watching'",
+    [now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, 'triggered', text, 'github')
+}
+
+// Haiku's suggested next step for the latest result (streamnext.ts), as JSON. Only while the item
+// still waits on that result: a reply or a move made meanwhile wins.
+export const saveStreamNext = async (id: string, json: string) => {
+  const d = await getDb()
+  const item = await streamItem(id)
+  if (item?.status !== 'needs_review') return
+  await logStreamEvent(d, id, 'next', json, 'lookout')
+}
+
+// A status change. Entering another column resets the card's rank to `entryRank` there (stream.ts):
+// on top of Done, unranked elsewhere. The caller re-ranks the whole column right after a drag.
+export const setStreamStatus = async (item: StreamItem, status: StreamStatus, rank: number | null = null) => {
+  if (status === item.status) return
+  const d = await getDb()
+  const sameColumn = columnOf(status) === columnOf(item.status)
+  await d.execute(
+    `UPDATE stream_items SET status = $1, updated_at = $2${sameColumn ? '' : ', sort_order = $4'} WHERE id = $3`,
+    sameColumn ? [status, new Date().toISOString(), item.id] : [status, new Date().toISOString(), item.id, rank],
+  )
+  await logStreamEvent(d, item.id, 'status', `${item.status} → ${status}`)
+}
+
+// A column's full order after a drag (or Move to top/bottom): every card in it gets a rank. One
+// statement, so a failure can't leave the column half re-ranked with old and new ranks mixed.
+export const setStreamOrders = async (orderedIds: string[]) => {
+  if (!orderedIds.length) return
+  const d = await getDb()
+  const cases = orderedIds.map((_, i) => `WHEN $${i + 1} THEN ${(i + 1) * 10}`).join(' ')
+  const ids = orderedIds.map((_, i) => `$${i + 1}`).join(', ')
+  await d.execute(`UPDATE stream_items SET sort_order = CASE id ${cases} END WHERE id IN (${ids})`, orderedIds)
+}
+
+// Risk check (streamrisk.ts) on a card Auto-run was about to start: risky waits for my OK in Needs
+// you (gate risk); safe only leaves its verdict in the trail. Only a card still queued moves.
+export const streamRiskVerdict = async (id: string, risky: boolean, reason: string) => {
+  const d = await getDb()
+  if (risky) {
+    const res = await d.execute(
+      "UPDATE stream_items SET status = 'needs_review', gate = 'risk', sort_order = NULL, updated_at = $1 WHERE id = $2 AND status = 'queued'",
+      [now(), id],
+    )
+    if (!res.rowsAffected) return false
+  }
+  await logStreamEvent(d, id, 'risk', `${risky ? 'risky' : 'safe'}: ${reason}`, 'lookout')
+  return true
+}
+
+// my OK on a risky card: back to Queued, cleared to start on its own (gate risk-ok, spent once it runs)
+export const allowRiskyStreamItem = async (id: string) => {
+  const d = await getDb()
+  const res = await d.execute(
+    "UPDATE stream_items SET status = 'queued', gate = 'risk-ok', sort_order = NULL, updated_at = $1 WHERE id = $2 AND gate = 'risk' AND status = 'needs_review'",
+    [now(), id],
+  )
+  if (res.rowsAffected) await logStreamEvent(d, id, 'status', 'let it run')
+}
+
+// Needs you criticality (streampriority.ts). Haiku's lands only on a card still waiting there with no
+// priority yet — never over mine, never on one that moved on meanwhile. Mine always lands, and stays.
+export const setStreamPriority = async (
+  id: string,
+  priority: StreamPriority,
+  reason: string | null,
+  source: 'haiku' | 'me',
+) => {
+  const d = await getDb()
+  if (source === 'me') {
+    await d.execute(
+      "UPDATE stream_items SET priority = $1, priority_reason = NULL, priority_source = 'me' WHERE id = $2",
+      [priority, id],
+    )
+    return logStreamEvent(d, id, 'priority', `set to ${priority}`)
+  }
+  await d.execute(
+    `UPDATE stream_items SET priority = $1, priority_reason = $2, priority_source = 'haiku'
+     WHERE id = $3 AND priority IS NULL AND status IN ('needs_review', 'question', 'failed', 'interrupted')`,
+    [priority, reason, id],
+  )
+}
+
+// back to the column's default order, and hand the priority chip back to Haiku
+export const resetStreamPriority = async (id: string) => {
+  const d = await getDb()
+  await d.execute(
+    'UPDATE stream_items SET sort_order = NULL, priority = NULL, priority_reason = NULL, priority_source = NULL WHERE id = $1',
+    [id],
+  )
+  await logStreamEvent(d, id, 'priority', 'reset to the default order')
+}
+
+// updated_at stays: it is when the status last changed (how long it waited on me, when it finished)
+export const editStreamItem = async (id: string, fields: { title: string; body: string | null }) => {
+  const d = await getDb()
+  await d.execute('UPDATE stream_items SET title = $1, body = $2 WHERE id = $3', [fields.title, fields.body, id])
+  await logStreamEvent(d, id, 'edited', null)
+}
+
+export const removeStreamItem = async (id: string) => {
+  const d = await getDb()
+  await d.execute('DELETE FROM stream_events WHERE item_id = $1', [id])
+  await d.execute('DELETE FROM stream_items WHERE id = $1', [id])
 }

@@ -1,13 +1,50 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./db', () => ({ capturedReviewsForTask: vi.fn() }))
+vi.mock('./db', () => ({ capturedReviewsForTask: vi.fn(), streamEventsForRef: vi.fn() }))
 vi.mock('./gh', () => ({ fetchPrTimeline: vi.fn() }))
 vi.mock('./log', () => ({ logError: vi.fn(), logInfo: vi.fn() }))
 vi.mock('./sessions', () => ({ sessionsForBranch: vi.fn() }))
 vi.mock('./alerts', () => ({ reviewFileTs: vi.fn() }))
 vi.mock('./prboard', () => ({ isBot: vi.fn(), reviewFlavor: vi.fn() }))
 
-import { type FeedEvent, linkReports, mergeReports } from './feed'
+import { type FeedEvent, linkReports, mergeReports, streamFeedEvents } from './feed'
+
+describe('streamFeedEvents', () => {
+  const ev = (kind: string, text: string | null, id = 1) => ({
+    id,
+    itemId: 'i1',
+    ts: `2026-10-01T10:00:0${id}.000Z`,
+    actor: 'lookout',
+    kind,
+    text,
+    itemTitle: 'follow up on #2',
+    itemStatus: 'watching' as const,
+  })
+
+  it('tells the PR history what the Stream card did, each entry opening the card', () => {
+    const out = streamFeedEvents(
+      [
+        ev('created', null, 1),
+        ev('started', 'picked from Queued', 2),
+        ev('result', 'all addressed', 3),
+        ev('watching', 'waiting for the author to push on #2', 4),
+      ],
+      'me',
+    )
+    expect(out.map((e) => e.text)).toEqual([
+      'Stream: added “follow up on #2”',
+      'Stream: agent started on “follow up on #2”',
+      'Stream: result ready for review — “follow up on #2”',
+      'Stream: “follow up on #2” is waiting for the author to push on #2',
+    ])
+    expect(out.every((e) => e.streamItemId === 'i1' && e.icon === 'workflow' && e.mine)).toBe(true)
+  })
+
+  it('keeps only the finishing status moves', () => {
+    const out = streamFeedEvents([ev('status', 'queued → paused', 1), ev('status', 'needs_review → done', 2)], 'me')
+    expect(out.map((e) => e.text)).toEqual(['Stream: “follow up on #2” done'])
+  })
+})
 
 const me = { login: 'me' }
 const session = (sessionId: string, ts: string): FeedEvent => ({

@@ -1,6 +1,8 @@
 import { load, type Store } from '@tauri-apps/plugin-store'
 import type { ActionButton, Config, MergePreference, Stage, WatchedRepo } from '../types'
 import { LEGACY_STAGE_IDS } from './stages'
+import { DEFAULT_TEMPLATES, type FlowTemplate, parseSteps } from './streamflow'
+import { readWatchers, type Watcher } from './streamwatchers'
 
 // Default buttons reproduce the old fixed actions. /review ships with Claude Code; the follow-up
 // default is a plain prompt. Placeholders: <branch_name>, <pr_id>. Users edit/add/remove these.
@@ -42,6 +44,16 @@ export const migrateButtons = (buttons: ActionButton[]): ActionButton[] =>
     ),
   }))
 
+// stored templates back to templates (a hand-edited config can't break the board); none = the defaults
+const readTemplates = (v: unknown): FlowTemplate[] => {
+  if (!Array.isArray(v)) return DEFAULT_TEMPLATES
+  return v.flatMap((t): FlowTemplate[] => {
+    const steps = parseSteps(t?.steps)
+    if (typeof t?.id !== 'string' || typeof t?.name !== 'string' || !steps.length) return []
+    return [{ id: t.id, name: t.name, steps, guidelines: typeof t.guidelines === 'string' ? t.guidelines : '' }]
+  })
+}
+
 let store: Store | null = null
 
 const getStore = async () => {
@@ -67,7 +79,72 @@ export const getConfig = async (): Promise<Config> => {
     openInBrowser: (await s.get<boolean>('openInBrowser')) ?? false,
     notifications: (await s.get<boolean>('notifications')) ?? true,
     mergeMethod: (await s.get<MergePreference>('mergeMethod')) ?? 'merge',
+    // on by default: the board is for work agents pick up; a card still waits for me before anything leaves
+    // off by default: a beta under development, switched on in Settings
+    streamEnabled: (await s.get<boolean>('streamEnabled')) ?? false,
+    streamAutoRun: (await s.get<boolean>('streamAutoRun')) ?? true,
+    // the shipped flows until I save my own; a stored list is read as is (steps re-validated)
+    streamTemplates: readTemplates(await s.get<unknown>('streamTemplates')),
+    streamWatchers: readWatchers(await s.get<unknown>('streamWatchers')),
   }
+}
+
+// Stream notification digest bookkeeping (streamdigest.ts): when I was last on the board, and when a
+// digest last went out. Kept out of Config — state, not a setting.
+export const getStreamMarks = async (): Promise<{ seenAt: string | null; notifiedAt: string | null }> => {
+  const s = await getStore()
+  return {
+    seenAt: (await s.get<string>('streamSeenAt')) ?? null,
+    notifiedAt: (await s.get<string>('streamNotifiedAt')) ?? null,
+  }
+}
+
+export const setStreamSeenAt = async (at: string) => {
+  const s = await getStore()
+  await s.set('streamSeenAt', at)
+}
+
+export const setStreamNotifiedAt = async (at: string) => {
+  const s = await getStore()
+  await s.set('streamNotifiedAt', at)
+}
+
+export const setStreamWatchers = async (watchers: Watcher[]) => {
+  const s = await getStore()
+  await s.set('streamWatchers', watchers)
+}
+
+// when each watcher last ran (watcher id → ISO time): state, not a setting
+// a watcher's last run: when, how many cards it made, and what went wrong if it did
+export type WatcherRun = { at: string; made: number; error?: string }
+
+export const getWatcherRuns = async (): Promise<Record<string, WatcherRun>> => {
+  const s = await getStore()
+  const raw = (await s.get<Record<string, unknown>>('streamWatcherRuns')) ?? {}
+  // an older build stored the bare time
+  return Object.fromEntries(
+    Object.entries(raw).map(([id, v]) => [id, typeof v === 'string' ? { at: v, made: 0 } : (v as WatcherRun)]),
+  )
+}
+
+export const setWatcherRun = async (id: string, run: WatcherRun) => {
+  const s = await getStore()
+  await s.set('streamWatcherRuns', { ...(await getWatcherRuns()), [id]: run })
+}
+
+export const setStreamTemplates = async (templates: FlowTemplate[]) => {
+  const s = await getStore()
+  await s.set('streamTemplates', templates)
+}
+
+export const setStreamEnabled = async (streamEnabled: boolean) => {
+  const s = await getStore()
+  await s.set('streamEnabled', streamEnabled)
+}
+
+export const setStreamAutoRun = async (streamAutoRun: boolean) => {
+  const s = await getStore()
+  await s.set('streamAutoRun', streamAutoRun)
 }
 
 export const setOpenInBrowser = async (openInBrowser: boolean) => {
