@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
 export type Confirm = {
   title: string
-  body: string
+  body: ReactNode
   confirmLabel: string
   onConfirm: () => void
 }

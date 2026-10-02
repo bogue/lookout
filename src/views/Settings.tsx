@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { ActionChip, ActionEditor } from '../components/ActionEditor'
 import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
+import { Icon } from '../components/Icon'
 import { SidePanel } from '../components/SidePanel'
 import { dropAction } from '../lib/actionlist'
 import { avatarUrl } from '../lib/avatar'
@@ -17,6 +18,7 @@ import { DEFAULT_PR_BUTTONS, DEFAULT_REVIEW_BUTTONS } from '../lib/config'
 import { capturedReviewCount, clearCapturedReviews } from '../lib/db'
 import { allowPath } from '../lib/fsscope'
 import { repoFromPath } from '../lib/gh'
+import type { IconName } from '../lib/icons'
 import { clearLog, logPath } from '../lib/log'
 import { MERGE_METHODS } from '../lib/merge'
 import {
@@ -148,9 +150,9 @@ const GripIcon = () => (
 
 // the one badge a row carries: the report it saves, when the action says which (auto-detect and
 // "don't save" show nothing)
-const REPORT_BADGE: Partial<Record<NonNullable<ActionButton['saveReport']>, string>> = {
-  review: '📄 Review report',
-  followup: '📋 Follow-up report',
+const REPORT_BADGE: Partial<Record<NonNullable<ActionButton['saveReport']>, { icon: IconName; label: string }>> = {
+  review: { icon: 'file', label: 'Review report' },
+  followup: { icon: 'checklist', label: 'Follow-up report' },
 }
 
 // One board's actions as a list you can clearly add to, reorder (drag the handle), edit and delete
@@ -259,7 +261,9 @@ const ActionList = ({
                   {b.prompt || 'no prompt yet'}
                 </span>
                 {badge && (
-                  <span className="shrink-0 rounded bg-deck-700 px-1.5 py-0.5 text-[11px] text-deck-300">{badge}</span>
+                  <span className="shrink-0 rounded bg-deck-700 px-1.5 py-0.5 text-[11px] text-deck-300">
+                    <Icon name={badge.icon} size={12} /> {badge.label}
+                  </span>
                 )}
               </button>
               <div className="flex shrink-0 items-center gap-1">
@@ -605,7 +609,7 @@ export const Settings = ({
               <div className="flex items-center gap-2 border-t border-deck-800 pt-2">
                 {/* macOS prompts once: after "Don't Allow" only System Settings can turn it back on */}
                 <span className="min-w-0 flex-1 text-xs text-deck-500">
-                  ⚠️ Blocked in System Settings — allow Lookout there, then switch this on.
+                  <Icon name="alert" /> Blocked in System Settings — allow Lookout there, then switch this on.
                 </span>
                 <button
                   type="button"

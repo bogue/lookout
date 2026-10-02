@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CardFrame } from '../components/CardFrame'
+import { Icon } from '../components/Icon'
 import { openPrWindow } from '../lib/prwindow'
 import { moveRepoBefore } from '../lib/repoorder'
 import { timeAgo } from '../lib/time'
@@ -293,9 +294,9 @@ export const Discovery = ({
 
       {discovered.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center">
-          <span className="text-6xl">🎉</span>
+          <Icon name="check-circle" size={56} />
           <p className="font-script text-3xl text-grass-300">All caught up!</p>
-          <p className="text-sm text-deck-400">No new pull requests waiting for you. Go grab a coffee ☕</p>
+          <p className="text-sm text-deck-400">No new pull requests waiting for you. Go grab a coffee.</p>
         </div>
       ) : (
         // biome-ignore lint/a11y/noStaticElementInteractions: drop target for the column dnd

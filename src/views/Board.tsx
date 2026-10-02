@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { BoardFilters } from '../components/BoardFilters'
 import { CardFrame, type CardMenu } from '../components/CardFrame'
 import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFailBadge'
+import { Icon } from '../components/Icon'
 import { type BoardFilter, emptyFilter, matchesFilter, openAuthorOptions, openRepoOptions } from '../lib/filters'
 import type { Run } from '../lib/runs'
 import { STAGE_LABEL } from '../lib/stages'
@@ -81,7 +82,8 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
         )}
         {t.followupSummary && (
           <span className="rounded bg-deck-700 px-1 py-0.5">
-            🚨{t.followupSummary.pending} ⚠️{t.followupSummary.partial} ✅{t.followupSummary.addressed}
+            <Icon name="stop" size={12} /> {t.followupSummary.pending} <Icon name="alert" size={12} />{' '}
+            {t.followupSummary.partial} <Icon name="check-circle" size={12} /> {t.followupSummary.addressed}
           </span>
         )}
         {t.hasNewActivity && (
@@ -94,7 +96,7 @@ const Card = ({ t, run, alerted, onOpen, onSeen, onDragStart, onDragEnd, menu }:
             title="New comments/reviews since last look — click to dismiss"
             className="cursor-pointer rounded bg-amber-500/20 px-1 py-0.5 text-amber-300 hover:bg-amber-500/40"
           >
-            💬 new
+            <Icon name="comment" size={12} /> new
           </button>
         )}
         {/* merged/closed: the build no longer matters */}

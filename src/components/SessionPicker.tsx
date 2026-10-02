@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
+import type { IconName } from '../lib/icons'
 import type { SessionOption } from '../lib/replytarget'
 import { messageTime } from '../lib/time'
+import { Icon } from './Icon'
 
 type Props = {
   options: SessionOption[] // the PR's sessions, newest first
@@ -10,7 +12,7 @@ type Props = {
   onOpenChange: (open: boolean) => void
 }
 
-const NEW_ICON = '💬'
+const NEW_ICON: IconName = 'comment-discussion'
 const NEW_LABEL = 'New chat session'
 const NEW_SHORT = 'Chat' // on the button, where the menu's wording would crowd the composer
 
@@ -46,7 +48,7 @@ export const SessionPicker = ({ options, selected, onSelect, open, onOpenChange 
             : 'bg-deck-700/70 text-deck-200 hover:bg-deck-700'
         } ${open ? 'ring-1 ring-deck-500' : ''}`}
       >
-        <span>{current ? current.icon : NEW_ICON}</span>
+        <Icon name={current ? current.icon : NEW_ICON} size={12} />
         <span className="min-w-0 truncate">{current ? current.label : NEW_SHORT}</span>
         <span className="text-deck-500">⌄</span>
       </button>
@@ -57,7 +59,7 @@ export const SessionPicker = ({ options, selected, onSelect, open, onOpenChange 
             onClick={() => pick(null)}
             className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm text-deck-200 hover:bg-deck-700"
           >
-            <span>{NEW_ICON}</span>
+            <Icon name={NEW_ICON} />
             <span className="flex-1">{NEW_LABEL}</span>
             {selected === null && <span className="text-grass-400">✓</span>}
           </button>
@@ -71,7 +73,7 @@ export const SessionPicker = ({ options, selected, onSelect, open, onOpenChange 
               title={o.sessionId}
               className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm text-deck-200 hover:bg-deck-700"
             >
-              <span>{o.icon}</span>
+              <Icon name={o.icon} />
               <span className="min-w-0 flex-1 truncate">{o.label}</span>
               {o.ts && <span className="shrink-0 text-[10px] text-deck-500">{messageTime(o.ts)}</span>}
               <span className="w-3 shrink-0 text-grass-400">{o.sessionId === selected ? '✓' : ''}</span>

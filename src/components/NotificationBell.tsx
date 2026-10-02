@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import type { IconName } from '../lib/icons'
 import { timeAgo } from '../lib/time'
 import type { Alert, AlertKind } from '../types'
+import { Icon } from './Icon'
 
 const svgAttrs = {
   width: 16,
@@ -35,11 +37,11 @@ const ArchiveIcon = () => (
 )
 
 // one glyph per rule, so the list is scannable without reading the titles
-const KIND_ICON: Record<AlertKind, string> = {
-  addressed: '🔁',
-  ready_to_send: '📤',
-  awaiting_me: '👀',
-  ci_fail: '🔴',
+const KIND_ICON: Record<AlertKind, IconName> = {
+  addressed: 'sync',
+  ready_to_send: 'paper-airplane',
+  awaiting_me: 'eye',
+  ci_fail: 'x-circle',
 }
 
 type Props = {
@@ -159,7 +161,7 @@ export const NotificationBell = ({ alerts, onOpen, onArchive, onMarkAllRead, onA
                     />
                     <span className="min-w-0 flex-1">
                       <span className={`block truncate text-sm ${a.read ? 'text-deck-400' : 'text-deck-100'}`}>
-                        {KIND_ICON[a.kind]} {a.title}
+                        <Icon name={KIND_ICON[a.kind]} /> {a.title}
                       </span>
                       <span className="block truncate text-xs text-deck-500">{a.body}</span>
                     </span>

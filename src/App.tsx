@@ -715,7 +715,7 @@ const App = () => {
               setPanelChecksFor(checks ? t.id : null)
               await markCardRead(t.id)
               if (t.hasNewActivity) {
-                await clearNewActivity(t.id) // clicking a card clears its "new" (same as the 💬 new button)
+                await clearNewActivity(t.id) // clicking a card clears its "new" (same as the "new" button)
                 await reload()
               }
             }}

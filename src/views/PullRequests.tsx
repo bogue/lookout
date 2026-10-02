@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { BoardFilters } from '../components/BoardFilters'
 import { CardFrame, type CardMenu } from '../components/CardFrame'
 import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFailBadge'
+import { Icon } from '../components/Icon'
 import { type BoardFilter, emptyFilter, matchesFilter, openRepoOptions } from '../lib/filters'
 import { PR_COLUMNS } from '../lib/prboard'
 import type { Run } from '../lib/runs'
@@ -13,7 +14,7 @@ type Props = {
   runs: Run[]
   alertedIds: Set<string> // PRs with an unread notification (same set the bell shows)
   onOpen: (pr: MyPr, checks?: boolean) => void // checks: unfold the failing CI checks
-  onDismissNew: (pr: MyPr) => void // the 💬 new tag: mark the PR's unread notifications read
+  onDismissNew: (pr: MyPr) => void // the "new" comment tag: mark the PR's unread notifications read
   onReorder: (pr: MyPr, column: PrColumn, orderedIds: string[]) => void
   menuFor: (pr: MyPr) => CardMenu // quick actions: hover ⋯ and right-click
 }
@@ -100,7 +101,7 @@ const PrCard = ({
             title="New reviews/comments since last look — click to dismiss"
             className="cursor-pointer rounded bg-amber-500/20 px-1 py-0.5 text-amber-300 hover:bg-amber-500/40"
           >
-            💬 new
+            <Icon name="comment" size={12} /> new
           </button>
         )}
         {pr.isDraft && <span className="rounded bg-deck-700 px-1 py-0.5 text-deck-400">✎ Draft</span>}

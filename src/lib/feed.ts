@@ -2,13 +2,14 @@ import type { PrState, ReviewFlavor, ReviewTask } from '../types'
 import { reviewFileTs } from './alerts'
 import { capturedReviewsForTask } from './db'
 import { fetchPrTimeline, type GhTimelineEvent } from './gh'
+import type { IconName } from './icons'
 import { logError, logInfo } from './log'
 import { isBot, reviewFlavor } from './prboard'
 import { sessionsForBranch } from './sessions'
 
 export type FeedEvent = {
   ts: string
-  icon: string
+  icon: IconName
   actor: string
   text: string
   mine: boolean // my action -> right side of the chat, others -> left
@@ -24,7 +25,7 @@ export type FeedEvent = {
   fromSession?: string // a captured report: the session it was read out of
   // the session a report answers, quoted over it like a chat reply. exact = the capture named it;
   // a report file names none, so it quotes the last session started before it (a guess)
-  replyTo?: { icon: string; text: string; ts: string; exact: boolean }
+  replyTo?: { icon: IconName; text: string; ts: string; exact: boolean }
 }
 
 // Tie each report to the session that produced it. Runs on the sorted feed.
@@ -50,20 +51,20 @@ const ghAvatar = (actor: string, url?: string): FeedEvent['avatar'] =>
 // 👀 wearing my picture as a badge
 const lookout = (me: string) => ({ actor: 'Lookout', mine: true, avatar: { emoji: '👀', badge: me } })
 
-const REVIEW_ICONS: Record<string, string> = {
-  approved: '✅',
-  'changes requested': '🔴',
-  commented: '📝',
+const REVIEW_ICONS: Record<string, IconName> = {
+  approved: 'check-circle-fill',
+  'changes requested': 'file-diff',
+  commented: 'code-review',
 }
 
-const KIND_ICONS = {
-  commit: '📦',
-  comment: '💬',
-  review_requested: '👀',
-  merged: '🟣',
-  closed: '❌',
-  reopened: '♻️',
-  force_pushed: '⚠️',
+const KIND_ICONS: Record<Exclude<GhTimelineEvent['kind'], 'review'>, IconName> = {
+  commit: 'git-commit',
+  comment: 'chat',
+  review_requested: 'eye',
+  merged: 'git-merge',
+  closed: 'git-pull-request-closed',
+  reopened: 'issue-reopened',
+  force_pushed: 'repo-push',
 }
 
 // Merge consecutive commits by the same actor into one "pushed N commits" event
@@ -131,7 +132,7 @@ export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEv
     if (ts)
       events.push({
         ts,
-        icon: '📄',
+        icon: 'file',
         ...lookout(me),
         text: 'Review done',
         filePath: f,
@@ -144,7 +145,7 @@ export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEv
   for (const c of captured)
     events.push({
       ts: c.createdAt,
-      icon: c.kind === 'followup' ? '📋' : '📄', // a follow-up is a checklist of addressed comments
+      icon: c.kind === 'followup' ? 'checklist' : 'file', // a follow-up is a checklist of addressed comments
       ...lookout(me),
       text: c.kind === 'followup' ? 'Follow-up done' : 'Review done',
       body: c.body ?? undefined,
@@ -173,7 +174,7 @@ export const buildFeed = async (
   if (task.prCreatedAt)
     events.push({
       ts: task.prCreatedAt,
-      icon: '🌱',
+      icon: 'git-pull-request',
       actor: task.prAuthor,
       text: 'opened the pull request',
       mine: isMine(task.prAuthor),
@@ -189,7 +190,7 @@ export const buildFeed = async (
       if (s.ts)
         events.push({
           ts: s.ts,
-          icon: s.question !== undefined ? '💬' : '🤖',
+          icon: s.question !== undefined ? 'comment-discussion' : 'dependabot',
           actor: 'you',
           text:
             s.question !== undefined
@@ -213,7 +214,7 @@ export const buildFeed = async (
     if (e.kind === 'review')
       events.push({
         ts: e.ts,
-        icon: REVIEW_ICONS[e.text] ?? '📝',
+        icon: REVIEW_ICONS[e.text] ?? 'code-review',
         actor: e.actor,
         text: `review: ${e.text}`,
         url: e.url,

@@ -24,6 +24,7 @@ import { ChecksBox } from './ChecksBox'
 import { CloseButton } from './CloseButton'
 import { CommandTextarea } from './CommandTextarea'
 import { type Confirm, ConfirmDialog } from './ConfirmDialog'
+import { Icon, IconBox } from './Icon'
 import { Markdown } from './Markdown'
 import { PrLink } from './PrLink'
 import { SessionPicker } from './SessionPicker'
@@ -597,7 +598,13 @@ export const SessionPanel = ({
     const checks = task.ciChecks ? ` (${task.ciChecks.failed}/${task.ciChecks.total} checks failed)` : ''
     setConfirm({
       title: `Merge ${task.repo.split('/')[1]}#${task.prNumber}?`,
-      body: `${label}.${red ? ` ⚠️ CI is red${checks} — merge anyway?` : ''}`,
+      body: red ? (
+        <>
+          {label}. <Icon name="alert" /> CI is red{checks} — merge anyway?
+        </>
+      ) : (
+        `${label}.`
+      ),
       confirmLabel: red ? 'Merge anyway' : 'Merge',
       onConfirm: () => merge(method),
     })
@@ -920,8 +927,9 @@ export const SessionPanel = ({
               ) : (
                 <ul className="flex flex-col">
                   {feed.map((e, i) => {
-                    // a report reads as a title ("📄 Review done (See Report)")
+                    // a report reads as a title ("Review done (See Report)", after its file icon)
                     const isReport = Boolean(e.filePath || e.body)
+                    const isCommit = e.icon === 'git-commit'
                     const name = feedName(e)
                     // a run of messages from one person shows who once, on its first message
                     const prev = feed[i - 1]
@@ -939,11 +947,13 @@ export const SessionPanel = ({
                     // line when it fits and wraps when not
                     const body = (
                       <>
-                        <span className="mr-1.5">{e.icon}</span>
-                        <span className={e.filePath || e.body || e.url || e.sessionId ? 'group-hover:underline' : ''}>
+                        <IconBox name={e.icon} className="mr-1.5" />
+                        <span
+                          // a commit message reads like GitHub's: mono, always underlined
+                          className={isCommit ? 'font-mono text-xs underline' : ''}
+                        >
                           {e.text}
                           {isReport && ' (See Report) ↗'}
-                          {e.sessionId && ' 👻'}
                         </span>
                         <span aria-hidden className="invisible ml-2 text-[10px]">
                           {meta}
@@ -956,9 +966,9 @@ export const SessionPanel = ({
                         </span>
                       </>
                     )
-                    // 18px = half a one-line bubble (8 + 20 + 8 px tall, leading-5 so an emoji can't grow the
+                    // 18px = half a one-line bubble (8 + 20 + 8 px tall, leading-5 so an icon can't grow the
                     // line): one line reads as a pill, centred, more lines as a softly squared box
-                    const bubbleClass = `relative rounded-[18px] border px-3 py-2 text-sm leading-5 ${
+                    const bubbleClass = `relative rounded-[18px] border py-2 pr-3 pl-2.5 text-sm leading-5 ${
                       e.mine
                         ? 'border-grass-700/60 bg-grass-600/25 text-grass-100'
                         : 'border-deck-700 bg-deck-800 text-deck-200'
@@ -977,7 +987,11 @@ export const SessionPanel = ({
                                   ? resumeSession(e.sessionId)
                                   : openPrWindow(e.url as string, task.repo, task.prNumber, ev.metaKey)
                           }
-                          className={`${bubbleClass} group cursor-pointer text-left`}
+                          className={`${bubbleClass} cursor-pointer text-left transition-colors duration-150 ${
+                            e.mine
+                              ? 'hover:border-grass-600 hover:bg-grass-600/35'
+                              : 'hover:border-deck-600 hover:bg-deck-700'
+                          }`}
                         >
                           {body}
                         </button>
@@ -1013,7 +1027,8 @@ export const SessionPanel = ({
                               >
                                 {/* the bubble stays solid; only what it says is toned down */}
                                 <span className="[filter:grayscale(70%)]">
-                                  {e.replyTo.icon} {e.replyTo.text} · {messageTime(e.replyTo.ts)}
+                                  <IconBox name={e.replyTo.icon} small className="mr-0.5" /> {e.replyTo.text} ·{' '}
+                                  {messageTime(e.replyTo.ts)}
                                 </span>
                               </div>
                               {/* opaque underlay: the front bubble's tint is translucent and would show the back one */}
