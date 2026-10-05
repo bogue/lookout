@@ -52,3 +52,9 @@ const RANK: Record<Stage, number> = {
 // Automated stage moves are forward-only: a card that already reached follow-up stays there when a
 // fresh review runs — having done a first round is a fact the button shouldn't undo.
 export const advanceStage = (current: Stage, target: Stage): Stage => (RANK[target] > RANK[current] ? target : current)
+
+const DONE_TTL_MS = 24 * 60 * 60 * 1000
+
+// Done keeps a finished PR for 24h after it merged or closed. An open PR stays: it still has to be merged.
+export const doneExpired = (t: { stage: Stage; prState: string; doneAt: string | null }, now: number): boolean =>
+  t.stage === 'done' && t.prState !== 'open' && !!t.doneAt && now - new Date(t.doneAt).getTime() > DONE_TTL_MS

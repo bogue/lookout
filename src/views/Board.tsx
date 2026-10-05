@@ -7,7 +7,7 @@ import { StreamChip } from '../components/StreamChip'
 import { Tip } from '../components/Tip'
 import { type BoardFilter, emptyFilter, matchesFilter, openAuthorOptions, openRepoOptions } from '../lib/filters'
 import type { Run } from '../lib/runs'
-import { STAGE_LABEL } from '../lib/stages'
+import { doneExpired, STAGE_LABEL } from '../lib/stages'
 import type { ReviewTask, Stage, StreamItem } from '../types'
 
 type Props = {
@@ -33,8 +33,6 @@ const COLUMNS: { stage: Stage[]; title: string; hint: string }[] = [
   { stage: ['followup'], title: STAGE_LABEL.followup, hint: 'A follow-up run happened.' },
   { stage: ['done'], title: STAGE_LABEL.done, hint: 'I approved the PR, or it merged.' },
 ]
-
-const DONE_TTL_MS = 24 * 60 * 60 * 1000
 
 type CardProps = {
   t: ReviewTask
@@ -128,9 +126,7 @@ export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorde
   // insertion indicator: line above card `before`, or at the column end when before is null
   const [dropLine, setDropLine] = useState<{ col: number; before: string | null } | null>(null)
   const now = Date.now()
-  const active = tasks.filter(
-    (t) => !(t.stage === 'done' && t.doneAt && now - new Date(t.doneAt).getTime() > DONE_TTL_MS),
-  )
+  const active = tasks.filter((t) => !doneExpired(t, now))
   const openRows = active.map((t) => ({ repo: t.repo, author: t.prAuthor, open: t.prState === 'open' }))
   const repoOptions = openRepoOptions(openRows)
   const authorOptions = openAuthorOptions(openRows)

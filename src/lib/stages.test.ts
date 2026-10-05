@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advanceStage, parseStage } from './stages'
+import { advanceStage, doneExpired, parseStage } from './stages'
 
 describe('advanceStage', () => {
   it('moves a card forward', () => {
@@ -46,5 +46,28 @@ describe('parseStage', () => {
   it('returns null for anything else', () => {
     expect(parseStage('nope')).toBeNull()
     expect(parseStage('')).toBeNull()
+  })
+})
+
+describe('doneExpired', () => {
+  const now = new Date('2026-07-03T12:00:00Z').getTime()
+  const old = '2026-07-01T00:00:00Z'
+  const fresh = '2026-07-03T06:00:00Z'
+
+  it('keeps an open PR in Done however long ago it landed there', () => {
+    expect(doneExpired({ stage: 'done', prState: 'open', doneAt: old }, now)).toBe(false)
+  })
+
+  it('hides a merged or closed PR 24h after it finished', () => {
+    expect(doneExpired({ stage: 'done', prState: 'merged', doneAt: old }, now)).toBe(true)
+    expect(doneExpired({ stage: 'done', prState: 'closed', doneAt: old }, now)).toBe(true)
+  })
+
+  it('keeps a merged PR for its first 24h', () => {
+    expect(doneExpired({ stage: 'done', prState: 'merged', doneAt: fresh }, now)).toBe(false)
+  })
+
+  it('never hides a card outside Done', () => {
+    expect(doneExpired({ stage: 'reviewed', prState: 'merged', doneAt: old }, now)).toBe(false)
   })
 })

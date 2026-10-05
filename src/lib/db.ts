@@ -100,13 +100,13 @@ export const setStage = async (id: string, stage: Stage) => {
   ])
 }
 
+// a card already in Done restarts its 24h clock when the PR merges or closes
 export const setPrState = async (id: string, prState: string) => {
   const d = await getDb()
-  await d.execute('UPDATE tasks SET pr_state = $1, updated_at = $2 WHERE id = $3', [
-    prState,
-    new Date().toISOString(),
-    id,
-  ])
+  await d.execute(
+    "UPDATE tasks SET pr_state = $1, updated_at = $2, done_at = CASE WHEN stage = 'done' AND $1 != 'open' THEN $2 ELSE done_at END WHERE id = $3",
+    [prState, new Date().toISOString(), id],
+  )
 }
 
 export const setApproved = async (id: string, approved: boolean) => {
