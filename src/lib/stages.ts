@@ -52,9 +52,3 @@ const RANK: Record<Stage, number> = {
 // Automated stage moves are forward-only: a card that already reached follow-up stays there when a
 // fresh review runs — having done a first round is a fact the button shouldn't undo.
 export const advanceStage = (current: Stage, target: Stage): Stage => (RANK[target] > RANK[current] ? target : current)
-
-// The stages where approving on GitHub makes sense: I've had my say (reviewed / follow-up), or the
-// card is already parked in Done and I just want to stamp the approval.
-const APPROVABLE: Stage[] = ['reviewed', 'followup', 'done']
-
-export const canApproveFrom = (stage: Stage): boolean => APPROVABLE.includes(stage)

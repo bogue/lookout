@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advanceStage, canApproveFrom, parseStage } from './stages'
+import { advanceStage, parseStage } from './stages'
 
 describe('advanceStage', () => {
   it('moves a card forward', () => {
@@ -19,21 +19,6 @@ describe('advanceStage', () => {
   })
 
   it('is a no-op for the same stage', () => expect(advanceStage('reviewed', 'reviewed')).toBe('reviewed'))
-})
-
-describe('canApproveFrom', () => {
-  it('allows reviewed, follow-up and done', () => {
-    expect(canApproveFrom('reviewed')).toBe(true)
-    expect(canApproveFrom('followup')).toBe(true)
-    expect(canApproveFrom('done')).toBe(true)
-  })
-
-  it('rejects stages where I have not reviewed yet', () => {
-    expect(canApproveFrom('discovered')).toBe(false)
-    expect(canApproveFrom('watching')).toBe(false)
-    expect(canApproveFrom('needs_review')).toBe(false)
-    expect(canApproveFrom('reviewing')).toBe(false)
-  })
 })
 
 describe('parseStage', () => {

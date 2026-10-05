@@ -1,3 +1,4 @@
+import { GitMergeIcon } from '@primer/octicons-react'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -14,7 +15,7 @@ import { openPrWindow } from '../lib/prwindow'
 import { sessionOptions } from '../lib/replytarget'
 import type { Run, RunLine } from '../lib/runs'
 import { sessionCwd } from '../lib/sessions'
-import { canApproveFrom, STAGES } from '../lib/stages'
+import { STAGES } from '../lib/stages'
 import { messageTime } from '../lib/time'
 import type { ActionButton, MergeMethod, MergePreference, ReviewTask, Stage } from '../types'
 import { ActionIcon } from './ActionIcon'
@@ -566,11 +567,11 @@ export const SessionPanel = ({
     setTimeout(() => setCopiedBranch(false), 1500)
   }
 
-  // one-click approval: once I've had my say (reviewed / follow-up / done), or a follow-up came back
-  // all green (nothing pending/partial) from an earlier stage
-  const allGreen = !!task.followupSummary && task.followupSummary.pending === 0 && task.followupSummary.partial === 0
-  const alreadyApproved = feed?.some((e) => e.mine && e.text === 'review: approved') ?? true // hidden until feed loads
-  const canApprove = (allGreen || canApproveFrom(task.stage)) && !alreadyApproved
+  // Approve and Merge never show together: not approved yet -> Approve, approved -> Merge, at any stage.
+  // task.approved is the DB's copy from the last sync, so the buttons don't wait for the feed; the feed
+  // catches an approval given since that sync, and `approved` one just given from this panel.
+  const iApproved = feed?.some((e) => e.mine && e.text === 'review: approved')
+  const prApproved = task.approved || approved || !!iApproved
 
   const approve = async () => {
     setApproving(true)
@@ -622,9 +623,7 @@ export const SessionPanel = ({
     : task.isDraft
       ? 'Draft — mark it ready for review first'
       : null
-  // only once a reviewer approved; `approved` covers an approval I just gave from this panel, before
-  // the next sync records it
-  const showMerge = task.prState === 'open' && (task.approved || approved) && !!method && !!mergeOpts
+  const showMerge = task.prState === 'open' && prApproved && !!method && !!mergeOpts
 
   // same label + tooltip as the ⋯ menu's row (cardactions.ts), for the PR panel's standalone button
   const snooze = snoozeAction(task.snoozed)
@@ -758,16 +757,16 @@ export const SessionPanel = ({
               </Tip>
             ))}
             <div className="ml-auto flex gap-2">
-              {!isPr && (canApprove || approved) && (
+              {!isPr && !prApproved && (
                 <Tip label="Approve the PR on GitHub and move it to Done">
                   <button
                     type="button"
                     onClick={approve}
-                    disabled={approving || approved}
+                    disabled={approving}
                     className="cursor-pointer rounded-md bg-grass-600 px-3 py-1.5 text-sm hover:bg-grass-500 disabled:opacity-60"
                   >
                     <span className="flex items-center gap-1.5">
-                      <CheckIcon /> {approved ? 'Approved' : approving ? 'Approving…' : 'Approve'}
+                      <CheckIcon /> {approving ? 'Approving…' : 'Approve'}
                     </span>
                   </button>
                 </Tip>
@@ -783,13 +782,16 @@ export const SessionPanel = ({
                         mergeOpts.allowed.length > 1 ? 'rounded-l-md' : 'rounded-md'
                       }`}
                     >
-                      {merging
-                        ? 'Merging…'
-                        : method === 'merge'
-                          ? 'Merge PR'
-                          : method === 'squash'
-                            ? 'Squash & merge'
-                            : 'Rebase & merge'}
+                      <span className="flex items-center gap-1.5">
+                        <GitMergeIcon size={14} />
+                        {merging
+                          ? 'Merging…'
+                          : method === 'merge'
+                            ? 'Merge PR'
+                            : method === 'squash'
+                              ? 'Squash & merge'
+                              : 'Rebase & merge'}
+                      </span>
                     </button>
                   </Tip>
                   {mergeOpts.allowed.length > 1 && (
