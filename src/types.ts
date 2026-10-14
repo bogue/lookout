@@ -150,6 +150,25 @@ export type ActionButton = {
   saveReport?: 'review' | 'followup' | 'off'
 }
 
+// What Lookout does right after I merge a PR from a card's panel, per board (src/lib/mergehook.ts).
+// Not an ActionButton: it shows no button, can't be reordered or deleted, only switched off.
+export type MergeHook = {
+  enabled: boolean
+  prompt: string // sent to `claude -p` like an action's (a /slash command or prose); <pr_id>, <branch_name>
+}
+
+// Something Lookout did on a card by itself, kept for the card's history (migration 024)
+export type CardEvent = {
+  id: number
+  taskId: string
+  ts: string
+  kind: 'merge_prompt'
+  text: string // what was sent: the filled prompt
+  sessionId: string | null // the claude session a prompt started
+  status: 'running' | 'ok' | 'failed'
+  output: string | null // why it failed
+}
+
 // a `gh pr merge` strategy, and the Settings preference ('github' = my default on GitHub's merge button)
 export type MergeMethod = 'merge' | 'squash' | 'rebase'
 export type MergePreference = MergeMethod | 'github'
@@ -160,6 +179,8 @@ export type Config = {
   repos: WatchedRepo[]
   reviewButtons: ActionButton[]
   prButtons: ActionButton[]
+  reviewMergeHook: MergeHook // runs after I merge a review card's PR from Lookout
+  prMergeHook: MergeHook // runs after I merge my own PR from Lookout
   animations: boolean // motion effects (running glow/sheen); colors stay either way
   logging: boolean // write errors to the debug log file (see src/lib/log.ts)
   captureReviews: boolean // recover a review from the session transcript when the skill exported no file

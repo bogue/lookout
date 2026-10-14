@@ -46,6 +46,8 @@ const config = (repos = [REPO, OTHER]): Config => ({
   repos: repos.map((repo) => ({ repo, path: `/clone/${repo}` })),
   reviewButtons: [],
   prButtons: [],
+  reviewMergeHook: { enabled: false, prompt: '' },
+  prMergeHook: { enabled: false, prompt: '' },
   animations: true,
   logging: false,
   captureReviews: false,

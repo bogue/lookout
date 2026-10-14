@@ -1,5 +1,6 @@
 import { load, type Store } from '@tauri-apps/plugin-store'
-import type { ActionButton, Config, MergePreference, Stage, WatchedRepo } from '../types'
+import type { ActionButton, ButtonBoard, Config, MergeHook, MergePreference, Stage, WatchedRepo } from '../types'
+import { readMergeHook } from './mergehook'
 import { LEGACY_STAGE_IDS } from './stages'
 import { DEFAULT_TEMPLATES, type FlowTemplate, parseSteps } from './streamflow'
 import { readWatchers, type Watcher } from './streamwatchers'
@@ -69,6 +70,9 @@ export const getConfig = async (): Promise<Config> => {
     repos: (await s.get<WatchedRepo[]>('repos')) ?? [],
     reviewButtons: migrateButtons((await s.get<ActionButton[]>('reviewButtons')) ?? DEFAULT_REVIEW_BUTTONS),
     prButtons: migrateButtons((await s.get<ActionButton[]>('prButtons')) ?? DEFAULT_PR_BUTTONS),
+    // off until switched on: a merge runs nothing more than it used to
+    reviewMergeHook: readMergeHook(await s.get<unknown>('reviewMergeHook')),
+    prMergeHook: readMergeHook(await s.get<unknown>('prMergeHook')),
     animations: (await s.get<boolean>('animations')) ?? true,
     // on by default: the failures worth catching (a gh call, a claude spawn) are intermittent, so a
     // switch you have to flip first would never be on when one happens. Rotated at 2 MB.
@@ -185,6 +189,11 @@ export const setReviewButtons = async (buttons: ActionButton[]) => {
 export const setPrButtons = async (buttons: ActionButton[]) => {
   const s = await getStore()
   await s.set('prButtons', buttons)
+}
+
+export const setMergeHook = async (board: ButtonBoard, hook: MergeHook) => {
+  const s = await getStore()
+  await s.set(board === 'review' ? 'reviewMergeHook' : 'prMergeHook', hook)
 }
 
 export const setGithubUser = async (githubUser: string) => {

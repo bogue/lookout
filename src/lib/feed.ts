@@ -1,6 +1,6 @@
-import type { FollowupSummary, PrState, ReviewFlavor, ReviewTask } from '../types'
+import type { CardEvent, FollowupSummary, PrState, ReviewFlavor, ReviewTask } from '../types'
 import { reviewFileTs } from './alerts'
-import { capturedReviewsForTask, streamEventsForRef } from './db'
+import { capturedReviewsForTask, cardEventsForTask, streamEventsForRef } from './db'
 import { parseFollowupSummary } from './followup'
 import { fetchPrTimeline, type GhTimelineEvent } from './gh'
 import type { IconName } from './icons'
@@ -24,6 +24,7 @@ export type FeedEvent = {
   body?: string // a captured review's markdown — stored, with no file behind it (capture.ts)
   sessionId?: string // resumes the claude session
   streamItemId?: string // a Stream card's milestone: opens that card on the Stream board
+  cardEventId?: number // something Lookout did on the card by itself, like the merge action (card_events)
   fromSession?: string // a captured report: the session it was read out of
   followup?: FollowupSummary // a follow-up's own counts, kept on its bubble (the card shows only the latest)
   // the session a report answers, quoted over it like a chat reply. exact = the capture named it;
@@ -165,8 +166,31 @@ export const reportEvents = async (task: ReviewTask, me: string): Promise<FeedEv
         return []
       })
   events.push(...streamFeedEvents(stream, me))
+  const card = await cardEventsForTask(task.id).catch((e) => {
+    logError('feed', e, `card events for ${task.id}`)
+    return []
+  })
+  events.push(...cardFeedEvents(card, me))
   return events
 }
+
+const fence = (output: string | null) => (output ? `\`\`\`\n${output}\n\`\`\`` : undefined)
+
+// What Lookout did on the card by itself, on my side like the reports. A prompt's session resumes
+// from its bubble; why it failed opens like a report.
+export const cardFeedEvents = (events: CardEvent[], me: string): FeedEvent[] =>
+  events.map((e) => {
+    const text = e.status === 'failed' ? `On merge: ${e.text} failed` : `On merge: sent ${e.text}`
+    return {
+      ts: e.ts,
+      icon: 'git-merge',
+      ...lookout(me),
+      text,
+      cardEventId: e.id,
+      ...(e.sessionId ? { sessionId: e.sessionId } : {}),
+      ...(fence(e.output) ? { body: fence(e.output) } : {}),
+    }
+  })
 
 // Stream is a beta behind a Settings flag (App sets this): off, a PR's history shows none of it
 let streamFeed = false
@@ -210,13 +234,23 @@ export const streamFeedEvents = (events: StreamTrail[], me: string): FeedEvent[]
     ]
   })
 
-// Lookout's own entries, re-read from the store on every card refresh: reports and Stream entries
-const isReport = (e: FeedEvent) => e.actor === 'Lookout' && !!(e.filePath || e.body || e.streamItemId)
+// Lookout's own entries, re-read from the store on every card refresh: reports, Stream and card events
+const isReport = (e: FeedEvent) =>
+  e.actor === 'Lookout' && !!(e.filePath || e.body || e.streamItemId || e.cardEventId !== undefined)
+
+// A merge action's session can also turn up in the session scan (its prompt named the branch): the
+// card event already tells it, with what was sent, so the scanned copy goes.
+const dropHookSessions = (events: FeedEvent[]): FeedEvent[] => {
+  const hooked = new Set(events.filter((e) => e.cardEventId !== undefined && e.sessionId).map((e) => e.sessionId))
+  return events.filter((e) => e.cardEventId !== undefined || !e.sessionId || !hooked.has(e.sessionId))
+}
 
 // Swap a built feed's reports for a fresh read of them: what's stored now is the whole truth, so a
 // report is added, kept or dropped as the store says, and re-quoted against the feed's sessions.
 export const mergeReports = (feed: FeedEvent[], reports: FeedEvent[]): FeedEvent[] =>
-  linkReports([...feed.filter((e) => !isReport(e)), ...reports].sort((a, b) => a.ts.localeCompare(b.ts)))
+  linkReports(
+    dropHookSessions([...feed.filter((e) => !isReport(e)), ...reports].sort((a, b) => a.ts.localeCompare(b.ts))),
+  )
 
 export const buildFeed = async (
   task: ReviewTask,
@@ -294,5 +328,5 @@ export const buildFeed = async (
   const asc = events.sort((a, b) => a.ts.localeCompare(b.ts))
   logInfo('feed', `${task.repo}#${task.prNumber}: ${asc.length} events (${gh.length} from the github timeline)`)
   // chronological: newest last, next to the reply input
-  return { feed: linkReports(groupCommits(asc)), summary: deriveSummary(gh) }
+  return { feed: linkReports(groupCommits(dropHookSessions(asc))), summary: deriveSummary(gh) }
 }

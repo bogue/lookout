@@ -17,12 +17,12 @@ type Props = {
   onDelete: () => void
 }
 
-const labelCls = 'text-[11px] font-semibold uppercase tracking-wide text-deck-400'
+export const labelCls = 'text-[11px] font-semibold uppercase tracking-wide text-deck-400'
 const inputCls =
   'rounded border border-deck-600 bg-deck-800 px-2 py-1.5 text-sm text-deck-100 outline-none focus:border-grass-500'
 
 // One titled block of the editor: small caps heading, optional note on its right
-const Section = ({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) => (
+export const Section = ({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) => (
   <section className="flex flex-col gap-3 rounded-lg border border-deck-700 bg-deck-800/40 p-3">
     <div className="flex items-center justify-between gap-2">
       <h3 className={labelCls}>{title}</h3>
@@ -32,7 +32,7 @@ const Section = ({ title, aside, children }: { title: string; aside?: ReactNode;
   </section>
 )
 
-const Switch = ({ on, label, onToggle }: { on: boolean; label: string; onToggle: () => void }) => (
+export const Switch = ({ on, label, onToggle }: { on: boolean; label: string; onToggle: () => void }) => (
   <button
     type="button"
     role="switch"

@@ -3,6 +3,7 @@ import type {
   Alert,
   AlertKind,
   CapturedReview,
+  CardEvent,
   CiChecks,
   MyPr,
   PrColumn,
@@ -938,4 +939,72 @@ export const removeStreamItem = async (id: string) => {
   const d = await getDb()
   await d.execute('DELETE FROM stream_events WHERE item_id = $1', [id])
   await d.execute('DELETE FROM stream_items WHERE id = $1', [id])
+}
+
+// Card events (migration 024): what Lookout did on a card by itself. An open panel subscribes so the
+// history moves with the run — a session id arriving, a command finishing — not on the next sync.
+const cardEventListeners = new Set<(taskId: string) => void>()
+
+export const subscribeCardEvents = (cb: (taskId: string) => void) => {
+  cardEventListeners.add(cb)
+  return () => {
+    cardEventListeners.delete(cb)
+  }
+}
+
+const cardEventsChanged = (taskId: string) => {
+  for (const l of cardEventListeners) l(taskId)
+}
+
+type CardEventRow = {
+  id: number
+  task_id: string
+  ts: string
+  kind: CardEvent['kind']
+  text: string
+  session_id: string | null
+  status: CardEvent['status']
+  output: string | null
+}
+
+export const addCardEvent = async (taskId: string, kind: CardEvent['kind'], text: string): Promise<number> => {
+  const d = await getDb()
+  const r = await d.execute(
+    "INSERT INTO card_events (task_id, ts, kind, text, status) VALUES ($1, $2, $3, $4, 'running')",
+    [taskId, new Date().toISOString(), kind, text],
+  )
+  cardEventsChanged(taskId)
+  return r.lastInsertId as number
+}
+
+export const updateCardEvent = async (
+  id: number,
+  taskId: string,
+  fields: { sessionId?: string; status?: CardEvent['status']; output?: string | null },
+) => {
+  const d = await getDb()
+  if (fields.sessionId !== undefined)
+    await d.execute('UPDATE card_events SET session_id = $1 WHERE id = $2', [fields.sessionId, id])
+  if (fields.status !== undefined)
+    await d.execute('UPDATE card_events SET status = $1, output = $2 WHERE id = $3', [
+      fields.status,
+      fields.output ?? null,
+      id,
+    ])
+  cardEventsChanged(taskId)
+}
+
+export const cardEventsForTask = async (taskId: string): Promise<CardEvent[]> => {
+  const d = await getDb()
+  const rows = await d.select<CardEventRow[]>('SELECT * FROM card_events WHERE task_id = $1 ORDER BY ts', [taskId])
+  return rows.map((r) => ({
+    id: r.id,
+    taskId: r.task_id,
+    ts: r.ts,
+    kind: r.kind,
+    text: r.text,
+    sessionId: r.session_id,
+    status: r.status,
+    output: r.output,
+  }))
 }

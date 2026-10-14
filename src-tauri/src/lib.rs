@@ -236,6 +236,12 @@ pub fn run() {
                             sql: include_str!("../migrations/023_ci_passed.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 24,
+                            description: "card events",
+                            sql: include_str!("../migrations/024_card_events.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

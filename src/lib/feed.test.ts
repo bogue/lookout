@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('./db', () => ({ capturedReviewsForTask: vi.fn(), streamEventsForRef: vi.fn() }))
+vi.mock('./db', () => ({
+  capturedReviewsForTask: vi.fn(),
+  streamEventsForRef: vi.fn(),
+  cardEventsForTask: vi.fn(async () => []),
+}))
 vi.mock('./gh', () => ({ fetchPrTimeline: vi.fn() }))
 vi.mock('./log', () => ({ logError: vi.fn(), logInfo: vi.fn() }))
 vi.mock('./sessions', () => ({ sessionsForBranch: vi.fn() }))
 vi.mock('./alerts', () => ({ reviewFileTs: vi.fn() }))
 vi.mock('./prboard', () => ({ isBot: vi.fn(), reviewFlavor: vi.fn() }))
 
-import { type FeedEvent, linkReports, mergeReports, streamFeedEvents } from './feed'
+import type { CardEvent } from '../types'
+import { cardFeedEvents, type FeedEvent, linkReports, mergeReports, streamFeedEvents } from './feed'
 
 describe('streamFeedEvents', () => {
   const ev = (kind: string, text: string | null, id = 1) => ({
@@ -192,5 +197,55 @@ describe('reportEvents', () => {
     const { reportEvents } = await import('./feed')
     const [followup] = await reportEvents({ id: 'a/b#1', reviewFiles: [] } as never, 'me')
     expect(followup.followup).toBeUndefined()
+  })
+})
+
+describe('cardFeedEvents', () => {
+  const ev = (extra: Partial<CardEvent>): CardEvent => ({
+    id: 1,
+    taskId: 'a/b#1',
+    ts: '2026-10-01T10:00:00.000Z',
+    kind: 'merge_prompt',
+    text: '/clean feat-x',
+    sessionId: null,
+    status: 'running',
+    output: null,
+    ...extra,
+  })
+
+  it('shows a prompt sent on merge as its session, resumable from the history', () => {
+    const [e] = cardFeedEvents([ev({ sessionId: 's1', status: 'ok' })], 'me')
+    expect(e).toMatchObject({ text: 'On merge: sent /clean feat-x', icon: 'git-merge', sessionId: 's1', mine: true })
+    expect(e.cardEventId).toBe(1)
+  })
+
+  it('says when a merge action failed, with what went wrong', () => {
+    const [e] = cardFeedEvents([ev({ status: 'failed', output: 'no local clone' })], 'me')
+    expect(e.text).toBe('On merge: /clean feat-x failed')
+    expect(e.body).toContain('no local clone')
+  })
+})
+
+describe('mergeReports with merge actions', () => {
+  it('keeps one bubble for a session a merge action started, even when the scan finds it too', () => {
+    const scanned = session('s1', '2026-01-01T10:00:01Z')
+    const [hook] = cardFeedEvents(
+      [
+        {
+          id: 1,
+          taskId: 'a/b#1',
+          ts: '2026-01-01T10:00:00Z',
+          kind: 'merge_prompt',
+          text: '/clean',
+          sessionId: 's1',
+          status: 'ok',
+          output: null,
+        },
+      ],
+      'me',
+    )
+    const out = mergeReports([scanned], [hook])
+    expect(out).toHaveLength(1)
+    expect(out[0].cardEventId).toBe(1)
   })
 })

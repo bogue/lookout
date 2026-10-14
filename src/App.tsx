@@ -17,6 +17,7 @@ import {
   setAnimations,
   setCaptureReviews,
   setLogging,
+  setMergeHook,
   setMergeMethod,
   setNotifications,
   setOpenInBrowser,
@@ -31,6 +32,7 @@ import {
   setStreamWatchers,
 } from './lib/config'
 import {
+  addCardEvent,
   addSessionId,
   allAlerts,
   allMyPrs,
@@ -51,12 +53,14 @@ import {
   setSnoozed,
   setStage,
   streamItems,
+  updateCardEvent,
   upsertMyPr,
 } from './lib/db'
 import { setStreamFeed, type TimelineSummary } from './lib/feed'
 import { parseFollowupSummary } from './lib/followup'
 import { resumeInGhostty } from './lib/ghostty'
-import { logError, logWarn, setLogEnabled } from './lib/log'
+import { errText, logError, logWarn, setLogEnabled } from './lib/log'
+import { DEFAULT_MERGE_HOOK, MERGE_HOOK_COMMAND, mergeHookText } from './lib/mergehook'
 import { snoozeMyPr, syncMyPrs } from './lib/myprs'
 import { notify, onNotificationClick, setNotificationsEnabled } from './lib/notify'
 import { classifyColumn } from './lib/prboard'
@@ -134,6 +138,8 @@ const App = () => {
     repos: [],
     reviewButtons: DEFAULT_REVIEW_BUTTONS,
     prButtons: DEFAULT_PR_BUTTONS,
+    reviewMergeHook: DEFAULT_MERGE_HOOK,
+    prMergeHook: DEFAULT_MERGE_HOOK,
     animations: true,
     logging: false,
     captureReviews: true,
@@ -561,6 +567,43 @@ const App = () => {
     }
   }
 
+  // The board's merge action, right after I merged the PR from its panel. Resolves once the card
+  // event is stored, so the panel's history shows it; the prompt runs on after that.
+  // Runs in the clone: the branch is merged, and its worktree is often what the action cleans up.
+  const runMergeHook = async (t: ReviewTask, board: ButtonBoard) => {
+    const hook = board === 'pr' ? config.prMergeHook : config.reviewMergeHook
+    const text = mergeHookText(hook, t.branch, t.prNumber)
+    if (!text) return
+    const id = await addCardEvent(t.id, 'merge_prompt', text)
+    const end = (status: 'ok' | 'failed', output: string | null = null) =>
+      updateCardEvent(id, t.id, { status, output }).catch((e) => logError('merge-hook', e, `${t.id}: save result`))
+    const repoPath = t.repoPath
+    if (!repoPath) return end('failed', `no local clone configured for ${t.repo}`)
+    // its own run, beside the card's: it must not replace a session still open in the panel. It
+    // never touches the card either — the card event is its whole record.
+    let failed = false
+    startRun(
+      `${t.id}:merge`,
+      MERGE_HOOK_COMMAND,
+      board,
+      text,
+      repoPath,
+      {
+        onSession: (_, sessionId) => {
+          updateCardEvent(id, t.id, { sessionId }).catch((e) => logError('merge-hook', e, `${t.id}: save session`))
+        },
+        onResult: (_, __, isError) => {
+          failed ||= isError
+        },
+        onEnd: (_, status) => end(failed || status === 'error' ? 'failed' : 'ok'),
+      },
+      ACTION_TOOLS,
+    ).catch((e) => {
+      logError('merge-hook', e, `${t.id}: ${text}`)
+      end('failed', errText(e))
+    })
+  }
+
   // Discovery / search "review" shortcut: add the PR to the board, then run the first review button.
   const startReview = async (id: string) => {
     const t = tasks.find((x) => x.id === id)
@@ -917,6 +960,10 @@ const App = () => {
               setNotificationsEnabled(on)
               setConfig(await getConfig())
             }}
+            onSaveMergeHook={async (board, hook) => {
+              await setMergeHook(board, hook)
+              setConfig(await getConfig())
+            }}
             onSaveMergeMethod={async (m) => {
               await setMergeMethod(m)
               setConfig(await getConfig())
@@ -975,6 +1022,7 @@ const App = () => {
           }}
           onCancel={() => cancelRun(panelTask.id)}
           onRunButton={(button) => runButton(panelTask, panelIsPr ? 'pr' : 'review', button)}
+          onMerged={() => runMergeHook(panelTask, panelIsPr ? 'pr' : 'review')}
           onStageChange={(stage) => moveStage(panelTask.id, stage)}
           // the panel is shared: a card from the Pull Requests board snoozes its own row
           onSnooze={(snoozed) => snoozeCard(panelTask.id, panelIsPr ? 'pr' : 'review', snoozed)}

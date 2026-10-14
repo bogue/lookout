@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { avatarUrl } from '../lib/avatar'
 import { cardActions, snoozeAction } from '../lib/cardactions'
 import { listSlashCommands } from '../lib/commands'
+import { subscribeCardEvents } from '../lib/db'
 import { buildFeed, type FeedEvent, mergeReports, reportEvents, type TimelineSummary } from '../lib/feed'
 import { approvePr, fetchChecks, fetchMergeOptions, mergePr } from '../lib/gh'
 import { resumeInGhostty } from '../lib/ghostty'
@@ -46,6 +47,7 @@ type Props = {
   buttons: ActionButton[] // user-configured action buttons, already filtered by their visibility conditions
   onReply: (text: string, sessionId: string | null) => void // null = start a new chat session
   onRunButton: (button: ActionButton) => void
+  onMerged?: () => Promise<void> // after a merge from this panel: the board's merge action (Settings)
   onStageChange: (stage: Stage) => void
   onSnooze: (snoozed: boolean) => void
   onKill: () => void
@@ -392,6 +394,7 @@ export const SessionPanel = ({
   buttons,
   onReply,
   onRunButton,
+  onMerged,
   onStageChange,
   onSnooze,
   onKill,
@@ -475,6 +478,24 @@ export const SessionPanel = ({
       live = false
     }
   }, [task])
+
+  // a merge action moves on its own (a session id arrives, a command finishes): re-read the history.
+  // Only the latest read lands, and only on the card it was read for.
+  const cardEventSeq = useRef(0)
+  useEffect(
+    () =>
+      subscribeCardEvents((id) => {
+        if (id !== taskRef.current.id) return
+        const seq = ++cardEventSeq.current
+        reportEvents(taskRef.current, me)
+          .then((reports) => {
+            if (seq !== cardEventSeq.current || taskRef.current.id !== id) return
+            setFeed((f) => f && mergeReports(f, reports))
+          })
+          .catch(() => {}) // logged by feed.ts
+      }),
+    [me],
+  )
 
   // the per-check list behind a red build; refetched when the card's CI verdict moves
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when switching task or CI state
@@ -667,6 +688,8 @@ export const SessionPanel = ({
     try {
       await mergePr(task.repo, task.prNumber, m)
       if (!isPr) onStageChange('done')
+      // the board's merge action: stored before the feed reloads, so the history shows it at once
+      await onMerged?.().catch(() => {}) // logged by App
       reloadFeed() // the merged event patches the card's state through onRefresh
     } catch (e) {
       setMergeError(e instanceof Error ? e.message.replace(/^.*failed: /s, '') : String(e))
@@ -1014,6 +1037,7 @@ export const SessionPanel = ({
                   {feed.map((e, i) => {
                     // a report reads as a title ("Review done (See Report)", after its file icon)
                     const isReport = Boolean(e.filePath || e.body)
+                    const isOutput = isReport && e.cardEventId !== undefined // a merge action's output
                     const isCommit = e.icon === 'git-commit'
                     const name = feedName(e)
                     // a run of messages from one person shows who once, on its first message
@@ -1038,7 +1062,7 @@ export const SessionPanel = ({
                           className={isCommit ? 'font-mono text-xs underline' : ''}
                         >
                           {e.text}
-                          {isReport && ' (See Report) ↗'}
+                          {isReport && (isOutput ? ' (See output) ↗' : ' (See Report) ↗')}
                         </span>
                         {/* its own line, kept whole; the time stamp still shares it when it fits */}
                         {e.followup && (

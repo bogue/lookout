@@ -6,10 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { exists } from '@tauri-apps/plugin-fs'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEffect, useState } from 'react'
-import { ActionChip, ActionEditor } from '../components/ActionEditor'
+import { ActionChip, ActionEditor, Switch } from '../components/ActionEditor'
 import { CloseButton } from '../components/CloseButton'
 import { type Confirm, ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
+import { MergeHookChip, MergeHookEditor } from '../components/MergeHookEditor'
 import { SidePanel } from '../components/SidePanel'
 import { StreamTemplates } from '../components/StreamTemplates'
 import { Tip } from '../components/Tip'
@@ -31,7 +32,7 @@ import {
   requestNotifications,
 } from '../lib/notify'
 import type { FlowTemplate } from '../lib/streamflow'
-import type { ActionButton, ButtonBoard, Config, MergePreference, ReviewTask, WatchedRepo } from '../types'
+import type { ActionButton, ButtonBoard, Config, MergeHook, MergePreference, ReviewTask, WatchedRepo } from '../types'
 import { History } from './History'
 
 type Props = {
@@ -46,6 +47,7 @@ type Props = {
   onSaveOpenInBrowser: (on: boolean) => void
   onSaveNotifications: (on: boolean) => void
   onSaveMergeMethod: (m: MergePreference) => void
+  onSaveMergeHook: (board: ButtonBoard, hook: MergeHook) => void
   onSaveStreamTemplates: (templates: FlowTemplate[]) => void
   onSaveStreamEnabled: (on: boolean) => void
 }
@@ -165,6 +167,9 @@ const REPORT_BADGE: Partial<Record<NonNullable<ActionButton['saveReport']>, { ic
 const ActionList = ({
   board,
   buttons,
+  mergeHook,
+  onOpenMerge,
+  onToggleMerge,
   onOpen,
   onAdd,
   onReorder,
@@ -173,6 +178,9 @@ const ActionList = ({
 }: {
   board: ButtonBoard
   buttons: ActionButton[]
+  mergeHook: MergeHook
+  onOpenMerge: () => void
+  onToggleMerge: () => void
   onOpen: (id: string) => void
   onAdd: () => void
   onReorder: (id: string, beforeId: string | null) => void
@@ -292,6 +300,40 @@ const ActionList = ({
             </li>
           )
         })}
+        {/* the merge action: always last, never dragged or deleted, only switched off */}
+        <li className="flex items-center gap-3 border-t border-dashed border-deck-700 p-2.5">
+          <Tip label="Always last: it runs after a merge, it isn't a panel button">
+            <span className="flex h-7 w-6 items-center justify-center text-deck-600">
+              <Icon name="git-merge" size={14} />
+            </span>
+          </Tip>
+          <Tip label="Edit the merge action">
+            <button
+              type="button"
+              onClick={onOpenMerge}
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded text-left"
+            >
+              <MergeHookChip hook={mergeHook} />
+              <span
+                className={`min-w-0 flex-1 truncate text-xs ${mergeHook.enabled && mergeHook.prompt.trim() ? 'font-mono text-deck-500' : 'italic text-deck-600'}`}
+              >
+                {!mergeHook.prompt.trim()
+                  ? 'Nothing runs after a merge from Lookout'
+                  : mergeHook.enabled
+                    ? mergeHook.prompt
+                    : `Off — ${mergeHook.prompt}`}
+              </span>
+            </button>
+          </Tip>
+          <div className="flex shrink-0 items-center gap-1">
+            <Switch on={mergeHook.enabled} label="Run after a merge" onToggle={onToggleMerge} />
+            <Tip label="Edit">
+              <button type="button" onClick={onOpenMerge} className={iconBtn}>
+                <PencilIcon />
+              </button>
+            </Tip>
+          </div>
+        </li>
       </ul>
     </div>
   )
@@ -309,10 +351,12 @@ export const Settings = ({
   onSaveOpenInBrowser,
   onSaveNotifications,
   onSaveMergeMethod,
+  onSaveMergeHook,
   onSaveStreamTemplates,
   onSaveStreamEnabled,
 }: Props) => {
-  const [editing, setEditing] = useState<{ board: ButtonBoard; id: string } | null>(null) // the one action open in the side panel
+  // the one action open in the side panel; id null = the board's merge action
+  const [editing, setEditing] = useState<{ board: ButtonBoard; id: string | null } | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null) // a destructive change waiting for a yes
   const [reviewBtns, setReviewBtns] = useState<ActionButton[]>(config.reviewButtons)
   const [prBtns, setPrBtns] = useState<ActionButton[]>(config.prButtons)
@@ -331,6 +375,19 @@ export const Settings = ({
   useEffect(() => {
     setPrBtns(config.prButtons)
   }, [config.prButtons])
+  // the merge actions: typing updates the local copy, saved on blur like an action's prompt
+  const [hooks, setHooks] = useState<Record<ButtonBoard, MergeHook>>({
+    review: config.reviewMergeHook,
+    pr: config.prMergeHook,
+  })
+  useEffect(() => {
+    setHooks({ review: config.reviewMergeHook, pr: config.prMergeHook })
+  }, [config.reviewMergeHook, config.prMergeHook])
+  const patchHook = (board: ButtonBoard, p: Partial<MergeHook>, persist: boolean) => {
+    const next = { ...hooks[board], ...p }
+    setHooks((h) => ({ ...h, [board]: next }))
+    if (persist) onSaveMergeHook(board, next)
+  }
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [autostart, setAutostart] = useState(false)
@@ -464,6 +521,9 @@ export const Settings = ({
       <ActionList
         board={board}
         buttons={api.buttons}
+        mergeHook={hooks[board]}
+        onOpenMerge={() => setEditing({ board, id: null })}
+        onToggleMerge={() => patchHook(board, { enabled: !hooks[board].enabled }, true)}
         onOpen={(id) => setEditing({ board, id })}
         onAdd={api.add}
         onReorder={(id, beforeId) => api.commit(dropAction(api.buttons, id, beforeId))}
@@ -735,6 +795,36 @@ export const Settings = ({
         <History tasks={tasks} />
       </div>
 
+      {editing && editing.id === null && (
+        <SidePanel
+          // Esc closes it while the prompt has focus, and an unmount fires no blur: save on the way out
+          onClose={() => {
+            onSaveMergeHook(editing.board, hooks[editing.board])
+            setEditing(null)
+          }}
+          initialWidth={560}
+        >
+          {({ close }) => (
+            <>
+              <div className="flex items-center gap-2 border-b border-deck-800 px-4 py-3">
+                <h2 className="text-sm font-semibold text-white">Edit the merge action</h2>
+                <div className="ml-auto">
+                  <CloseButton onClick={close} />
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <MergeHookEditor
+                  board={editing.board}
+                  hook={hooks[editing.board]}
+                  commands={commands}
+                  onChange={(p, persist) => patchHook(editing.board, p, persist)}
+                  onBlur={() => onSaveMergeHook(editing.board, hooks[editing.board])}
+                />
+              </div>
+            </>
+          )}
+        </SidePanel>
+      )}
       {editing && openBoard && editingButton && (
         <SidePanel onClose={() => setEditing(null)} initialWidth={560}>
           {({ close }) => (
