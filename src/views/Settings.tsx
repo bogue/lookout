@@ -557,7 +557,7 @@ export const Settings = ({
           ) : (
             <span className="italic text-deck-500">(detected on first sync)</span>
           )}
-          <span>— your own PRs are never listed.</span>
+          <span>— PRs from this account show under Pull Requests, as yours.</span>
         </p>
       </div>
 
