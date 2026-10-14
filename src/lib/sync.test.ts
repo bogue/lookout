@@ -10,6 +10,7 @@ vi.mock('./db', () => ({
   allTasks: vi.fn(),
   capturedCliTaskIds: vi.fn(async () => new Set<string>()),
   deleteCapturedReview: vi.fn(),
+  ghLogins: vi.fn(async () => new Map<string, boolean>()),
   pruneCapturedReviews: vi.fn(),
   pruneRepos: vi.fn(),
   setActivity: vi.fn(),
@@ -19,10 +20,12 @@ vi.mock('./db', () => ({
   setSnoozed: vi.fn(),
   setStage: vi.fn(),
   syncAlerts: vi.fn(async () => []),
+  saveGhLogins: vi.fn(),
   upsertCapturedReview: vi.fn(),
   upsertPr: vi.fn(),
 }))
 vi.mock('./gh', () => ({
+  fetchAuthorKinds: vi.fn(async () => new Map<string, boolean>()),
   fetchLogin: vi.fn(),
   fetchName: vi.fn(),
   fetchPrExchange: vi.fn(async () => ({ count: 0, ciState: null, reviews: [], comments: [], commits: [] })),
@@ -50,14 +53,16 @@ import {
   allTasks,
   capturedCliTaskIds,
   deleteCapturedReview,
+  ghLogins,
   pruneCapturedReviews,
+  saveGhLogins,
   setApproved,
   setPrState,
   setStage,
   upsertCapturedReview,
   upsertPr,
 } from './db'
-import { fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
+import { fetchAuthorKinds, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
 import { scanReviewFiles } from './reviews'
 import { scanRepoReviewSessions, scanRepoSessions } from './sessions'
 import { captureRun, syncAll } from './sync'
@@ -86,6 +91,7 @@ const task = (overrides: Partial<ReviewTask>): ReviewTask => ({
   ciChecks: null,
   conflicts: false,
   approved: false,
+  othersReview: null,
   hasNewActivity: false,
   snoozed: false,
   seen: false,
@@ -237,6 +243,53 @@ describe('syncAll — a local scan that fails', () => {
     await syncAll()
 
     expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, approved: true }))
+  })
+  it("keeps the other humans' latest verdict, without mine or a bot's", async () => {
+    vi.mocked(listOpenPrs).mockResolvedValue([
+      {
+        ...theirPr,
+        latestReviews: [
+          { author: { login: 'alice' }, state: 'COMMENTED' },
+          { author: { login: 'cursor[bot]' }, state: 'CHANGES_REQUESTED' },
+          { author: { login: 'me' }, state: 'CHANGES_REQUESTED' },
+        ],
+      },
+    ])
+
+    await syncAll()
+
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, othersReview: 'commented' }))
+  })
+  it('looks up a bot gh lists without its [bot] suffix, and leaves its review out', async () => {
+    vi.mocked(listOpenPrs).mockResolvedValue([
+      { ...theirPr, latestReviews: [{ author: { login: 'cursor' }, state: 'COMMENTED' }] },
+    ])
+    vi.mocked(fetchAuthorKinds).mockResolvedValueOnce(new Map([['cursor', true]]))
+
+    await syncAll()
+
+    expect(fetchAuthorKinds).toHaveBeenCalledWith(REPO, [2])
+    expect(saveGhLogins).toHaveBeenCalledWith(new Map([['cursor', true]]))
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, othersReview: null }))
+  })
+  it('knows a bot it already classified without asking GitHub again', async () => {
+    vi.mocked(listOpenPrs).mockResolvedValue([
+      { ...theirPr, latestReviews: [{ author: { login: 'cursor' }, state: 'COMMENTED' }] },
+    ])
+    vi.mocked(ghLogins).mockResolvedValueOnce(new Map([['cursor', true]]))
+    vi.mocked(fetchAuthorKinds).mockClear()
+
+    await syncAll()
+
+    expect(fetchAuthorKinds).not.toHaveBeenCalled()
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, othersReview: null }))
+  })
+  it('stores no verdict when no other human reviewed', async () => {
+    vi.mocked(listOpenPrs).mockResolvedValue([{ ...theirPr, latestReviews: [] }])
+
+    await syncAll()
+
+    expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, othersReview: null }))
   })
 })
 

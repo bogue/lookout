@@ -7,8 +7,10 @@ import {
   allTasks,
   capturedCliTaskIds,
   deleteCapturedReview,
+  ghLogins,
   pruneCapturedReviews,
   pruneRepos,
+  saveGhLogins,
   setActivity,
   setApproved,
   setLinks,
@@ -19,15 +21,55 @@ import {
   upsertCapturedReview,
   upsertPr,
 } from './db'
-import { fetchLogin, fetchName, fetchPrExchange, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
+import {
+  fetchAuthorKinds,
+  fetchLogin,
+  fetchName,
+  fetchPrExchange,
+  fetchPrState,
+  listCommentedByMe,
+  listOpenPrs,
+} from './gh'
 import { logError } from './log'
 import { notify } from './notify'
-import { hasApproval } from './prboard'
+import { hasApproval, isBot, reviewFlavor } from './prboard'
 import { scanReviewFiles } from './reviews'
 import { approvedByMe, deriveStage } from './reviewstage'
 import { captureKind, scanRepoReviewSessions, scanRepoSessions, transcriptPath } from './sessions'
 import { BOARD_STAGES } from './stages'
 import type { CaptureKind, CaptureResult } from './transcript'
+
+type Reviews = Awaited<ReturnType<typeof listOpenPrs>>[number]['latestReviews']
+
+// gh lists a bot's review as plain "cursor", no [bot] suffix, so isBot alone takes it for a person.
+// Ask GraphQL about reviewers never classified (gh_logins, shared with the Pull Requests board): once
+// known, a login is never asked about again. A failed lookup stores nothing and is retried next pass.
+const learnReviewers = async (
+  repo: string,
+  prs: { number: number; latestReviews: Reviews }[],
+  me: string,
+  logins: Map<string, boolean>,
+) => {
+  const fresh = new Map<number, Set<string>>() // PR number -> reviewers not classified yet
+  for (const pr of prs)
+    for (const { author } of pr.latestReviews) {
+      if (!author?.login || author.login === me || isBot(author) || logins.has(author.login)) continue
+      fresh.set(pr.number, (fresh.get(pr.number) ?? new Set()).add(author.login))
+    }
+  if (!fresh.size) return
+  try {
+    const kinds = await fetchAuthorKinds(repo, [...fresh.keys()])
+    const learned = new Map([...fresh.values()].flatMap((s) => [...s]).map((l) => [l, kinds.get(l) ?? false]))
+    for (const [l, bot] of learned) logins.set(l, bot)
+    await saveGhLogins(learned)
+  } catch (e) {
+    logError('sync', e, `bot lookup ${repo}`)
+  }
+}
+
+// What the other humans said: mine moves the card off Discovery anyway, and a bot's review is lint
+const othersReview = (reviews: Reviews, me: string, logins: Map<string, boolean>) =>
+  reviewFlavor(reviews.filter((r) => r.author.login !== me && !isBot(r.author) && logins.get(r.author.login) !== true))
 
 // Stages whose PRs we actively watch for new comments / CI: everything on the board bar Done.
 const ACTIVE_STAGES = new Set<string>(BOARD_STAGES.filter((s) => s !== 'done'))
@@ -126,6 +168,10 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
     )
 
   const known = new Map((await allTasks()).map((t) => [t.id, t]))
+  const logins = await ghLogins().catch((e) => {
+    logError('sync', e, 'read gh logins') // unclassified this pass: looked up below
+    return new Map<string, boolean>()
+  })
   const openIds = new Set<string>()
   const polledRepos = new Set<string>()
   for (const { repo, path } of config.repos) {
@@ -153,6 +199,12 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
       }),
     ])
     polledRepos.add(repo)
+    await learnReviewers(
+      repo,
+      prs.filter((pr) => pr.author.login !== me),
+      me,
+      logins,
+    )
     const boardedPrs = new Map<string, number>() // branch -> PR number, for the capture pass below
     const boardedBranches = new Map<number, string>() // …and back, for a session that named a PR id
     for (const pr of prs) {
@@ -172,6 +224,7 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
         reviewRequested: pr.reviewRequests.some((r) => r.login === me),
         isDraft: pr.isDraft,
         approved: hasApproval(pr.latestReviews),
+        othersReview: othersReview(pr.latestReviews, me, logins),
       })
       const sessionIds = sessionsByBranch.get(pr.headRefName) ?? []
       // /do-review flattens "/" in branch names when building the report filename

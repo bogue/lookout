@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { emptyFilter, filterActive, matchesFilter, openAuthorOptions, openRepoOptions, repoTitle } from './filters'
+import {
+  emptyFilter,
+  filterActive,
+  matchesFilter,
+  matchesReviews,
+  openAuthorOptions,
+  openRepoOptions,
+  repoTitle,
+} from './filters'
 
 describe('matchesFilter', () => {
   it('matches everything when no filter is set', () => {
@@ -93,5 +101,22 @@ describe('openAuthorOptions', () => {
         { author: 'zoe', open: false },
       ]),
     ).toEqual(['alice', 'bob'])
+  })
+})
+
+describe('matchesReviews', () => {
+  it('matches everything when nothing is picked', () => {
+    expect(matchesReviews([], null)).toBe(true)
+    expect(matchesReviews([], 'approved')).toBe(true)
+  })
+
+  it('buckets a PR nobody reviewed as none', () => {
+    expect(matchesReviews(['none'], null)).toBe(true)
+    expect(matchesReviews(['none'], 'commented')).toBe(false)
+  })
+
+  it('matches any picked verdict', () => {
+    expect(matchesReviews(['approved', 'changes_requested'], 'approved')).toBe(true)
+    expect(matchesReviews(['approved', 'changes_requested'], 'commented')).toBe(false)
   })
 })

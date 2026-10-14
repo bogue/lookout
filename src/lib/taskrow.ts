@@ -1,4 +1,4 @@
-import type { ReviewTask, Stage } from '../types'
+import type { ReviewFlavor, ReviewTask, Stage } from '../types'
 import { ciChecksOf } from './myprrow'
 
 // The `tasks` table row, exactly as the schema defines it (src-tauri/migrations/001_tasks.sql and up).
@@ -28,6 +28,7 @@ export type TaskRow = {
   ci_passed?: number | null // migration 023
   conflicts?: number // migration 018
   approved?: number // migration 019
+  others_review?: string | null // migration 025
   new_activity: number
   snoozed: number
   seen: number
@@ -58,6 +59,7 @@ export const toTask = (r: TaskRow): ReviewTask => ({
   ciChecks: ciChecksOf(r.ci_failed, r.ci_passed, r.ci_total),
   conflicts: r.conflicts === 1,
   approved: r.approved === 1,
+  othersReview: (r.others_review ?? null) as ReviewFlavor,
   hasNewActivity: r.new_activity === 1,
   snoozed: r.snoozed === 1,
   seen: r.seen === 1,

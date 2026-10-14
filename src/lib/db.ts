@@ -7,6 +7,7 @@ import type {
   CiChecks,
   MyPr,
   PrColumn,
+  ReviewFlavor,
   ReviewTask,
   Stage,
   StreamEvent,
@@ -64,14 +65,15 @@ export const upsertPr = async (t: {
   reviewRequested: boolean
   isDraft: boolean
   approved: boolean
+  othersReview: ReviewFlavor
 }) => {
   const d = await getDb()
   await d.execute(
-    `INSERT INTO tasks (id, repo, repo_path, branch, pr_number, pr_title, pr_url, pr_author, pr_created_at, review_requested, is_draft, updated_at, approved)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `INSERT INTO tasks (id, repo, repo_path, branch, pr_number, pr_title, pr_url, pr_author, pr_created_at, review_requested, is_draft, updated_at, approved, others_review)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT(id) DO UPDATE SET
        pr_title = $6, pr_url = $7, pr_created_at = $9, review_requested = $10, is_draft = $11, repo_path = $3, updated_at = $12,
-       approved = $13`,
+       approved = $13, others_review = $14`,
     [
       t.id,
       t.repo,
@@ -86,6 +88,7 @@ export const upsertPr = async (t: {
       t.isDraft ? 1 : 0,
       new Date().toISOString(),
       t.approved ? 1 : 0,
+      t.othersReview,
     ],
   )
 }

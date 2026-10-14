@@ -78,6 +78,7 @@ export type ReviewTask = {
   ciChecks: CiChecks
   conflicts: boolean // GitHub can't merge it as is (and its CI usually hasn't run)
   approved: boolean // at least one human reviewer approved (a ✓ before the title)
+  othersReview: ReviewFlavor // the latest verdict from humans other than me (Discovery's Reviews filter)
   hasNewActivity: boolean
   snoozed: boolean
   seen: boolean // acknowledged in Discovery (clears the "new" highlight and drops it from the count)

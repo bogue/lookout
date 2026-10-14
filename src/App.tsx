@@ -639,6 +639,7 @@ const App = () => {
     ciChecks: pr.ciChecks,
     conflicts: pr.conflicts,
     approved: pr.approved,
+    othersReview: pr.humanReview,
     hasNewActivity: false,
     snoozed: pr.snoozed,
     seen: true,

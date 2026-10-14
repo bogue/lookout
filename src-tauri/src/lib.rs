@@ -242,6 +242,12 @@ pub fn run() {
                             sql: include_str!("../migrations/024_card_events.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 25,
+                            description: "other reviewers verdict",
+                            sql: include_str!("../migrations/025_others_review.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

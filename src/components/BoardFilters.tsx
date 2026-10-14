@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { type BoardFilter, type RepoOption, repoTitle } from '../lib/filters'
+import type { IconName } from '../lib/icons'
+import { Icon } from './Icon'
 import { Tip } from './Tip'
 
 const CI_OPTIONS = [
@@ -10,7 +12,15 @@ const CI_OPTIONS = [
   { value: 'none', label: 'none' },
 ]
 
-type Option = { value: string; label: string; title?: string; count?: number }
+type Option = { value: string; label: string; title?: string; count?: number; icon?: IconName }
+
+// the other humans' latest verdict, drawn with the icons the card history uses for each
+const REVIEW_OPTIONS: Option[] = [
+  { value: 'none', label: 'none yet', icon: 'circle', title: 'No one has reviewed it yet (bots excluded)' },
+  { value: 'commented', label: 'commented', icon: 'comment' },
+  { value: 'changes_requested', label: 'changes requested', icon: 'file-diff' },
+  { value: 'approved', label: 'approved', icon: 'check-circle-fill' },
+]
 
 type MultiSelectProps = {
   label: string
@@ -64,6 +74,7 @@ const MultiSelect = ({ label, options, selected, onChange }: MultiSelectProps) =
                 >
                   {selected.includes(o.value) && '✓'}
                 </span>
+                {o.icon && <Icon name={o.icon} size={12} />}
                 {o.label}
                 {o.count !== undefined && <span className="ml-auto pl-2 text-deck-500">({o.count})</span>}
               </button>
@@ -114,4 +125,9 @@ export const BoardFilters = ({
     )}
     <MultiSelect label="CI" options={CI_OPTIONS} selected={filter.ci} onChange={(ci) => onChange({ ...filter, ci })} />
   </div>
+)
+
+// Discovery: PRs by what other people's reviews said (bots and mine left out)
+export const ReviewsFilter = ({ selected, onChange }: { selected: string[]; onChange: (v: string[]) => void }) => (
+  <MultiSelect label="Reviews" options={REVIEW_OPTIONS} selected={selected} onChange={onChange} />
 )

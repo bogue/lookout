@@ -56,6 +56,7 @@ const task = (over: Partial<ReviewTask> = {}): ReviewTask => ({
   ciChecks: null,
   conflicts: false,
   approved: false,
+  othersReview: null,
   hasNewActivity: false,
   snoozed: false,
   seen: true,

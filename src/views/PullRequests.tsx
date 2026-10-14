@@ -5,6 +5,7 @@ import { CiFailBadge, CiNeutralBadge, ConflictsBadge } from '../components/CiFai
 import { Icon } from '../components/Icon'
 import { StreamChip } from '../components/StreamChip'
 import { Tip } from '../components/Tip'
+import { ToggleChip } from '../components/ToggleChip'
 import { type BoardFilter, emptyFilter, matchesFilter, openRepoOptions } from '../lib/filters'
 import { PR_COLUMNS } from '../lib/prboard'
 import type { Run } from '../lib/runs'
@@ -194,24 +195,17 @@ export const PullRequests = ({
     <div className="flex h-full flex-col gap-3">
       <div className="flex shrink-0 items-center gap-2">
         <BoardFilters repos={repoOptions} filter={filter} onChange={setFilter} />
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2">
           {snoozedCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowSnoozed((s) => !s)}
-              className="cursor-pointer text-xs text-deck-400 hover:text-deck-200"
-            >
-              {showSnoozed ? 'hide snoozed' : `show snoozed (${snoozedCount})`}
-            </button>
+            <ToggleChip
+              label="Show snoozed"
+              count={snoozedCount}
+              on={showSnoozed}
+              onToggle={() => setShowSnoozed((s) => !s)}
+            />
           )}
           {doneCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowDone((s) => !s)}
-              className="cursor-pointer text-xs text-deck-400 hover:text-deck-200"
-            >
-              {showDone ? 'hide done' : `show done (${doneCount})`}
-            </button>
+            <ToggleChip label="Show done" count={doneCount} on={showDone} onToggle={() => setShowDone((s) => !s)} />
           )}
         </div>
       </div>

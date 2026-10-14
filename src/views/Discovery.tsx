@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { ReviewsFilter } from '../components/BoardFilters'
 import { CardFrame } from '../components/CardFrame'
 import { Icon } from '../components/Icon'
 import { Tip } from '../components/Tip'
+import { ToggleChip } from '../components/ToggleChip'
+import { matchesReviews } from '../lib/filters'
 import { openPrWindow } from '../lib/prwindow'
 import { moveRepoBefore } from '../lib/repoorder'
 import { timeAgo } from '../lib/time'
@@ -194,15 +197,21 @@ export const Discovery = ({
   // double-clicking a column title zooms into that project alone
   const [focus, setFocus] = useState<string | null>(null)
 
+  // Reviews filter: what other people's reviews said (not persisted, like the boards' filters).
+  // Starts on "none yet": a PR someone else already took on isn't one to discover
+  const [reviews, setReviews] = useState<string[]>(['none'])
+
   const discovered = tasks
-    .filter((t) => t.stage === 'discovered' && t.prState === 'open')
+    .filter((t) => t.stage === 'discovered' && t.prState === 'open' && matchesReviews(reviews, t.othersReview))
     .sort(
       (a, b) =>
         Number(b.reviewRequested) - Number(a.reviewRequested) ||
         Number(a.isDraft) - Number(b.isDraft) || // drafts sink to the bottom of the column
         (b.prCreatedAt ?? '').localeCompare(a.prCreatedAt ?? ''),
     )
-  const ignored = tasks.filter((t) => t.stage === 'ignored' && t.prState === 'open')
+  const ignored = tasks.filter(
+    (t) => t.stage === 'ignored' && t.prState === 'open' && matchesReviews(reviews, t.othersReview),
+  )
 
   // configured order first, then any repo with PRs that isn't watched anymore (kept visible, alphabetical)
   const configured = repos.map((r) => r.repo).filter((r, i, all) => all.indexOf(r) === i)
@@ -289,14 +298,9 @@ export const Discovery = ({
             </>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onToggleIgnored}
-            className="cursor-pointer text-xs text-deck-400 hover:text-deck-200"
-          >
-            {showIgnored ? 'hide ignored' : `show ignored (${inScope.length})`}
-          </button>
+        <div className="flex items-center gap-2">
+          <ReviewsFilter selected={reviews} onChange={setReviews} />
+          <ToggleChip label="Show ignored" count={inScope.length} on={showIgnored} onToggle={onToggleIgnored} />
         </div>
       </div>
 

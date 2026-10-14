@@ -6,6 +6,7 @@ import { FollowupBadge } from '../components/FollowupBadge'
 import { Icon } from '../components/Icon'
 import { StreamChip } from '../components/StreamChip'
 import { Tip } from '../components/Tip'
+import { ToggleChip } from '../components/ToggleChip'
 import { type BoardFilter, emptyFilter, matchesFilter, openAuthorOptions, openRepoOptions } from '../lib/filters'
 import type { Run } from '../lib/runs'
 import { doneExpired, STAGE_LABEL } from '../lib/stages'
@@ -166,13 +167,14 @@ export const Board = ({ tasks, runs, alertedIds, onOpenSession, onSeen, onReorde
       <div className="flex shrink-0 items-center gap-2">
         <BoardFilters repos={repoOptions} authors={authorOptions} filter={filter} onChange={setFilter} />
         {snoozedCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowSnoozed((s) => !s)}
-            className="ml-auto cursor-pointer text-xs text-deck-400 hover:text-deck-200"
-          >
-            {showSnoozed ? 'hide snoozed' : `show snoozed (${snoozedCount})`}
-          </button>
+          <div className="ml-auto">
+            <ToggleChip
+              label="Show snoozed"
+              count={snoozedCount}
+              on={showSnoozed}
+              onToggle={() => setShowSnoozed((s) => !s)}
+            />
+          </div>
         )}
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">

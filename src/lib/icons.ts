@@ -6,6 +6,7 @@ export type IconName =
   | 'check-circle'
   | 'check-circle-fill'
   | 'checklist'
+  | 'circle'
   | 'code-review'
   | 'comment'
   | 'comment-discussion'

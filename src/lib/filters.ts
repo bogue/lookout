@@ -1,4 +1,4 @@
-import type { CiState } from '../types'
+import type { CiState, ReviewFlavor } from '../types'
 
 // Board filter: selected repos ("projects"), PR authors and CI buckets.
 // An empty list means "no filter on this field".
@@ -14,6 +14,11 @@ export const matchesFilter = (f: BoardFilter, repo: string, ci: CiState, author?
   (f.repos.length === 0 || f.repos.includes(repo)) &&
   (f.ci.length === 0 || f.ci.includes(ci ?? 'none')) &&
   (f.authors.length === 0 || (author !== undefined && f.authors.includes(author)))
+
+// Discovery's Reviews filter: the other humans' latest verdict, 'none' when nobody reviewed yet.
+// Nothing picked = every PR.
+export const matchesReviews = (picked: string[], review: ReviewFlavor): boolean =>
+  picked.length === 0 || picked.includes(review ?? 'none')
 
 // the `repo` cards show: owner/name stripped down to name
 export const repoTitle = (repo: string): string => repo.split('/')[1] ?? repo
