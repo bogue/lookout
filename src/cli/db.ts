@@ -150,9 +150,15 @@ export const openDb = (path = resolveDbPath(), readOnly = false): Db => {
       const to = force ? stage : advanceStage(current.stage, stage)
       if (to === current.stage) return { from: current.stage, to, changed: false }
       const u = stageUpdate(to)
-      handle
-        .prepare('UPDATE tasks SET stage = ?, done_at = ?, updated_at = ? WHERE id = ?')
-        .run(u.stage, u.done_at, u.updated_at, id)
+      // `removed_at` arrived in migration 026; an older app's database just goes without it
+      if (hasColumn('tasks', 'removed_at'))
+        handle
+          .prepare('UPDATE tasks SET stage = ?, done_at = ?, removed_at = ?, updated_at = ? WHERE id = ?')
+          .run(u.stage, u.done_at, u.removed_at, u.updated_at, id)
+      else
+        handle
+          .prepare('UPDATE tasks SET stage = ?, done_at = ?, updated_at = ? WHERE id = ?')
+          .run(u.stage, u.done_at, u.updated_at, id)
       return { from: current.stage, to, changed: true }
     },
     setSeen: (id, seen) => {

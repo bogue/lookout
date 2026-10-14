@@ -84,6 +84,7 @@ export type ReviewTask = {
   seen: boolean // acknowledged in Discovery (clears the "new" highlight and drops it from the count)
   sortOrder: number | null
   doneAt: string | null
+  removedAt: string | null // last sent back to Discovery; sync re-boards only on engagement after it
   updatedAt: string
 }
 

@@ -96,9 +96,10 @@ export const upsertPr = async (t: {
 export const setStage = async (id: string, stage: Stage) => {
   const d = await getDb()
   const u = stageUpdate(stage)
-  await d.execute('UPDATE tasks SET stage = $1, done_at = $2, updated_at = $3 WHERE id = $4', [
+  await d.execute('UPDATE tasks SET stage = $1, done_at = $2, removed_at = $3, updated_at = $4 WHERE id = $5', [
     u.stage,
     u.done_at,
+    u.removed_at,
     u.updated_at,
     id,
   ])

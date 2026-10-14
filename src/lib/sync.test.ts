@@ -62,7 +62,7 @@ import {
   upsertCapturedReview,
   upsertPr,
 } from './db'
-import { fetchAuthorKinds, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
+import { fetchAuthorKinds, fetchPrExchange, fetchPrState, listCommentedByMe, listOpenPrs } from './gh'
 import { scanReviewFiles } from './reviews'
 import { scanRepoReviewSessions, scanRepoSessions } from './sessions'
 import { captureRun, syncAll } from './sync'
@@ -97,6 +97,7 @@ const task = (overrides: Partial<ReviewTask>): ReviewTask => ({
   seen: false,
   sortOrder: null,
   doneAt: null,
+  removedAt: null,
   updatedAt: '2026-07-01T00:00:00Z',
   ...overrides,
 })
@@ -290,6 +291,97 @@ describe('syncAll — a local scan that fails', () => {
     await syncAll()
 
     expect(upsertPr).toHaveBeenCalledWith(expect.objectContaining({ id: `${REPO}#2`, othersReview: null }))
+  })
+})
+
+// "Remove from board" sends a card back to Discovery; sync auto-boards a PR I already reviewed or
+// commented on, so without the removal stamp a removed card bounced straight back as Reviewed.
+describe('syncAll — a PR I engaged with', () => {
+  const ID = `${REPO}#2`
+  const commentedPr = {
+    number: 2,
+    title: 'Their PR',
+    url: `https://github.com/${REPO}/pull/2`,
+    headRefName: 'their-branch',
+    author: { login: 'someone' },
+    createdAt: '2026-09-15T13:54:23Z',
+    isDraft: false,
+    reviewRequests: [],
+    latestReviews: [],
+  }
+  const exchangeSaying = (createdAt: string) => ({
+    count: 1,
+    ciState: null,
+    ciChecks: null,
+    conflicts: false,
+    reviews: [],
+    comments: [{ author: { login: 'me' }, createdAt }],
+    commits: [],
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getConfig).mockResolvedValue({
+      githubUser: 'me',
+      repos: [{ repo: REPO, path: '/clone' }],
+      githubName: 'Me Name',
+      reviewButtons: [],
+      prButtons: [],
+      reviewMergeHook: { enabled: false, prompt: '' },
+      prMergeHook: { enabled: false, prompt: '' },
+      animations: true,
+      logging: false,
+      captureReviews: false,
+      openInBrowser: false,
+      notifications: true,
+      mergeMethod: 'merge',
+      streamEnabled: false,
+      streamAutoRun: false,
+      streamTemplates: [],
+      streamWatchers: [],
+    })
+    vi.mocked(listOpenPrs).mockResolvedValue([commentedPr])
+    vi.mocked(listCommentedByMe).mockResolvedValue(new Set([2]))
+    vi.mocked(scanRepoSessions).mockResolvedValue(new Map())
+    vi.mocked(scanReviewFiles).mockResolvedValue(new Map())
+  })
+
+  it('boards it as Reviewed the first time it is seen', async () => {
+    vi.mocked(allTasks).mockResolvedValue([])
+
+    await syncAll()
+
+    expect(setStage).toHaveBeenCalledWith(ID, 'reviewed')
+  })
+
+  it('leaves it in Discovery after I removed it, when I said nothing since', async () => {
+    const removed = task({ id: ID, prNumber: 2, stage: 'discovered', removedAt: '2026-09-20T10:00:00.000Z' })
+    vi.mocked(allTasks).mockResolvedValue([removed])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchangeSaying('2026-09-18T10:00:00Z'))
+
+    await syncAll()
+
+    expect(setStage).not.toHaveBeenCalledWith(ID, 'reviewed')
+  })
+
+  it('boards it again when I comment after removing it', async () => {
+    const removed = task({ id: ID, prNumber: 2, stage: 'discovered', removedAt: '2026-09-20T10:00:00.000Z' })
+    vi.mocked(allTasks).mockResolvedValue([removed])
+    vi.mocked(fetchPrExchange).mockResolvedValueOnce(exchangeSaying('2026-09-21T08:00:00Z'))
+
+    await syncAll()
+
+    expect(setStage).toHaveBeenCalledWith(ID, 'reviewed')
+  })
+
+  it('leaves a removed card in Discovery when its activity fetch fails', async () => {
+    const removed = task({ id: ID, prNumber: 2, stage: 'discovered', removedAt: '2026-09-20T10:00:00.000Z' })
+    vi.mocked(allTasks).mockResolvedValue([removed])
+    vi.mocked(fetchPrExchange).mockRejectedValueOnce(new Error('gh: rate limited'))
+
+    await syncAll()
+
+    expect(setStage).not.toHaveBeenCalledWith(ID, 'reviewed')
   })
 })
 

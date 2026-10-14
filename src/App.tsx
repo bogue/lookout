@@ -645,6 +645,7 @@ const App = () => {
     seen: true,
     sortOrder: null,
     doneAt: null,
+    removedAt: null,
     updatedAt: pr.createdAt,
   })
 

@@ -62,6 +62,7 @@ const task = (over: Partial<ReviewTask> = {}): ReviewTask => ({
   seen: true,
   sortOrder: null,
   doneAt: null,
+  removedAt: null,
   updatedAt: '2026-08-20T00:00:00Z',
   ...over,
 })

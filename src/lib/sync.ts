@@ -143,6 +143,17 @@ const captureReviews = async (
   }
 }
 
+// Did I review or comment on the PR after `removedAt`? Never removed = yes. A failed fetch keeps
+// the card where I put it.
+const spokeSince = async (removedAt: string | null, repo: string, prNumber: number, me: string) => {
+  if (!removedAt) return true
+  const x = await fetchPrExchange(repo, prNumber, me).catch((e) => {
+    logError('sync', e, `engagement check ${repo}#${prNumber}`)
+    return null
+  })
+  return x !== null && Date.parse(myLastWordAt(x, me)) > Date.parse(removedAt)
+}
+
 // One full sync pass: poll gh, upsert PRs, link sessions/review files, advance stages, auto-clear merged.
 export const syncAll = async (): Promise<ReviewTask[]> => {
   const config = await getConfig()
@@ -233,9 +244,16 @@ export const syncAll = async (): Promise<ReviewTask[]> => {
       if (sessionIds.length || reviewFiles.length) await setLinks(id, sessionIds, reviewFiles)
 
       // already reviewed or commented on GitHub -> skip Discovery, board it as Reviewed (the poll
-      // below refines that: an approval of mine lands it in Done)
+      // below refines that: an approval of mine lands it in Done). A card I removed from the board
+      // comes back only on something I said after removing it.
       const engaged = pr.latestReviews.some((r) => r.author.login === me) || commentedByMe.has(pr.number)
-      if (engaged && (known.get(id)?.stage ?? 'discovered') === 'discovered') await setStage(id, 'reviewed')
+      const card = known.get(id)
+      if (
+        engaged &&
+        (card?.stage ?? 'discovered') === 'discovered' &&
+        (await spokeSince(card?.removedAt ?? null, repo, pr.number, me))
+      )
+        await setStage(id, 'reviewed')
       boardedPrs.set(pr.headRefName, pr.number)
       boardedBranches.set(pr.number, pr.headRefName)
     }

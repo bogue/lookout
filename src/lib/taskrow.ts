@@ -29,6 +29,7 @@ export type TaskRow = {
   conflicts?: number // migration 018
   approved?: number // migration 019
   others_review?: string | null // migration 025
+  removed_at?: string | null // migration 026
   new_activity: number
   snoozed: number
   seen: number
@@ -65,13 +66,16 @@ export const toTask = (r: TaskRow): ReviewTask => ({
   seen: r.seen === 1,
   sortOrder: r.sort_order,
   doneAt: r.done_at,
+  removedAt: r.removed_at ?? null,
   updatedAt: r.updated_at,
 })
 
-// A stage move touches three columns; both drivers must write the same thing, so the values come
-// from here. `done_at` stamps when a card lands in Done and clears when it leaves.
+// A stage move touches four columns; both drivers must write the same thing, so the values come
+// from here. `done_at` stamps when a card lands in Done and clears when it leaves; `removed_at` the
+// same for Discovery (sync never moves a card there, so it's always a manual removal).
 export const stageUpdate = (stage: Stage, now = new Date().toISOString()) => ({
   stage,
   done_at: stage === 'done' ? now : null,
+  removed_at: stage === 'discovered' ? now : null,
   updated_at: now,
 })
